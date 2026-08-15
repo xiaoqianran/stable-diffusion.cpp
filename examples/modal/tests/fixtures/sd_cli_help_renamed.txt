@@ -1,0 +1,21 @@
+stable-diffusion.cpp version future-rename
+Usage: /sd-cli [options]
+
+CLI Options:
+  -o, --output <string>                         path to write result image to
+  -v, --verbose                                 print extra info
+
+Context Options:
+  -m, --model <string>                          path to full model
+  --diffusion-model <string>                    path to the standalone diffusion model
+  --vae <string>                                path to standalone vae model
+
+Generation Options:
+  -p, --prompt <string>                         the prompt to render
+  -n, --negative-prompt <string>                the negative prompt
+  -H, --height <int>                            image height
+  -W, --width <int>                             image width
+  --sample-steps <int>                          number of sample steps
+  --txt-cfg <float>                             text guidance scale
+  -s, --seed                                    RNG seed
+  --new-turbo-flag                              enable a newly added turbo path

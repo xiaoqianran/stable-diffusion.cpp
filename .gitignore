@@ -16,4 +16,11 @@ preview.png
 .claude/
 CLAUDE.local.md
 .agents/
+skills-lock.json
 .codex/
+.codegraph/
+.cursor/mcp.json
+examples/modal/.venv/
+examples/modal/**/__pycache__/
+examples/modal/**/*.pyc
+examples/modal/.pytest_cache/

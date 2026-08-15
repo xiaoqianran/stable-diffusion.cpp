@@ -1,0 +1,34 @@
+stable-diffusion.cpp version test-fixture
+Usage: /sd-cli [options]
+
+CLI Options:
+  -o, --output <string>                         path to write result image to (default: ./output.png)
+  -v, --verbose                                 print extra info
+  -h, --help                                    show this help message and exit
+  -M, --mode                                    run mode, one of [img_gen, adetailer, vid_gen, upscale, convert, metadata]
+
+Context Options:
+  -m, --model <string>                          path to full model
+  --clip_l <string>                             path to the clip-l text encoder
+  --clip_g <string>                             path to the clip-g text encoder
+  --t5xxl <string>                              path to the t5xxl text encoder
+  --llm <string>                                path to the llm text encoder
+  --diffusion-model <string>                    path to the standalone diffusion model
+  --vae <string>                                path to standalone vae model
+  --lora-model-dir <string>                     lora model directory
+  -t, --threads <int>                           number of threads to use during computation
+  --offload-to-cpu                              offload weights to cpu
+
+Generation Options:
+  -p, --prompt <string>                         the prompt to render
+  -n, --negative-prompt <string>                the negative prompt (default: "")
+  -i, --init-img <string>                       path to the init image
+  -H, --height <int>                            image height, in pixel space (default: 512)
+  -W, --width <int>                             image width, in pixel space (default: 512)
+  --steps <int>                                 number of sample steps (default: 20)
+  -b, --batch-count <int>                       batch count
+  --cfg-scale <float>                           unconditional guidance scale: (default: 7.0)
+  --strength <float>                            strength for noising/unnoising (default: 0.75)
+  -s, --seed                                    RNG seed (default: 42, use random seed for < 0)
+  --sampling-method                             sampling method
+  --scheduler                                   denoiser sigma scheduler

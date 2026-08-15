@@ -1,0 +1,15 @@
+[project]
+name = "sdcpp-hooks"
+version = "0.1.0"
+description = "Decoupled Modal hooks for stable-diffusion.cpp image generation"
+requires-python = ">=3.10"
+readme = "README.md"
+
+[project.optional-dependencies]
+modal = ["modal>=0.64"]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
