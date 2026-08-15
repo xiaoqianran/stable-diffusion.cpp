@@ -1,6 +1,14 @@
 from pathlib import Path
 
-from sdcpp_hooks.artifacts import ArtifactRef, is_fetchable, resolve_artifacts
+import pytest
+
+from sdcpp_hooks.artifacts import (
+    ArtifactMissingError,
+    ArtifactRef,
+    collect_fetchable_uris,
+    is_fetchable,
+    resolve_artifacts,
+)
 
 
 def test_is_fetchable_accepts_remote_uris_only():
@@ -120,3 +128,48 @@ def test_resolve_artifacts_can_pull_arbitrary_uri_keys(tmp_path):
     )
 
     assert resolved["uri_0"].read_bytes() == b"weights"
+
+
+def test_collect_fetchable_uris_from_request_fields_and_extra_cli():
+    uris = collect_fetchable_uris(
+        {
+            "model": "hf://org/repo/model.safetensors",
+            "prompt": "a cat",
+            "vae": "https://example.com/vae.safetensors",
+        },
+        extra_cli={"--taesd": "hf://org/repo/tae.safetensors", "--verbose": True},
+    )
+
+    assert uris == [
+        "hf://org/repo/model.safetensors",
+        "https://example.com/vae.safetensors",
+        "hf://org/repo/tae.safetensors",
+    ]
+
+
+def test_resolve_artifacts_refuses_download_when_cache_missing(tmp_path):
+    def fetch(url, dest, headers):
+        raise AssertionError("GPU path must not download")
+
+    with pytest.raises(ArtifactMissingError, match="pull it on CPU"):
+        resolve_artifacts(
+            {"model": "hf://org/repo/missing.safetensors"},
+            cache_dir=tmp_path,
+            fetch=fetch,
+            allow_download=False,
+        )
+
+
+def test_resolve_artifacts_can_load_cache_without_downloading(tmp_path):
+    dest = tmp_path / "hf" / "org" / "repo" / "main" / "cached.safetensors"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"cached")
+
+    resolved = resolve_artifacts(
+        {"model": "hf://org/repo/cached.safetensors"},
+        cache_dir=tmp_path,
+        fetch=lambda *args: (_ for _ in ()).throw(AssertionError("download")),
+        allow_download=False,
+    )
+
+    assert resolved["model"] == dest

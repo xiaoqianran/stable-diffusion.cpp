@@ -102,11 +102,38 @@ class ArtifactRef:
         raise ValueError(f"cannot place {self.raw}")
 
 
+class ArtifactMissingError(FileNotFoundError):
+    pass
+
+
 def is_fetchable(value: object) -> bool:
     if not isinstance(value, str):
         return False
     text = value.strip()
     return text.startswith(("hf://", "civitai://", "https://", "http://"))
+
+
+def collect_fetchable_uris(
+    values: Mapping[str, object],
+    extra_cli: Mapping[str, object] | None = None,
+) -> list[str]:
+    uris: list[str] = []
+    seen: set[str] = set()
+    for key, raw in values.items():
+        if key not in ARTIFACT_FIELDS or not is_fetchable(raw):
+            continue
+        text = str(raw).strip()
+        if text not in seen:
+            seen.add(text)
+            uris.append(text)
+    for raw in (extra_cli or {}).values():
+        if not is_fetchable(raw):
+            continue
+        text = str(raw).strip()
+        if text not in seen:
+            seen.add(text)
+            uris.append(text)
+    return uris
 
 
 def default_token_for_url(url: str) -> str | None:
@@ -136,6 +163,7 @@ def resolve_artifacts(
     token_for_url: TokenFn | None = None,
     hf_endpoint: str | None = None,
     artifact_fields: Iterable[str] = ARTIFACT_FIELDS,
+    allow_download: bool = True,
 ) -> dict[str, Path]:
     cache_dir = Path(cache_dir)
     fetch = fetch or default_fetch
@@ -155,6 +183,11 @@ def resolve_artifacts(
         if dest.exists() and dest.stat().st_size > 0:
             resolved[key] = dest
             continue
+
+        if not allow_download:
+            raise ArtifactMissingError(
+                f"{raw} is not on volume storage; pull it on CPU first"
+            )
 
         url = ref.download_url(hf_endpoint=endpoint)
         headers = {"User-Agent": "sdcpp-modal-cli/0.1"}

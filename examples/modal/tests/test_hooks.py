@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from sdcpp_hooks.artifacts import ArtifactMissingError
 from sdcpp_hooks.contract import GenerateRequest
 from sdcpp_hooks.hooks import generate, use_engine, use_models, use_sdcpp
 
@@ -54,6 +57,21 @@ def test_use_models_only_resolves_artifact_fields(tmp_path):
 
     assert set(models) == {"model"}
     assert models["model"].read_bytes() == b"weights"
+
+
+def test_use_models_can_forbid_downloads(tmp_path):
+    request = GenerateRequest(
+        prompt="a cat",
+        model="hf://org/repo/missing.safetensors",
+    )
+
+    with pytest.raises(ArtifactMissingError):
+        use_models(
+            request,
+            cache_dir=tmp_path,
+            fetch=lambda *args: (_ for _ in ()).throw(AssertionError("download")),
+            allow_download=False,
+        )
 
 
 def test_generate_hook_runs_adapted_argv_and_collects_images(tmp_path, current_help_text):

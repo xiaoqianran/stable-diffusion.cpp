@@ -1,7 +1,7 @@
 """Modal workers for the standalone sdcpp CLI.
 
-pull/ls use a slim CPU image and write to volume sdcpp-models.
-probe/generate use the official CUDA image; only generate requests a GPU.
+Downloads run only on CPU and write volume sdcpp-models.
+GPU containers load those cached files and run sd-cli, then scale to zero.
 """
 
 from __future__ import annotations
@@ -13,7 +13,11 @@ from pathlib import Path
 
 import modal
 
-from sdcpp_hooks.artifacts import list_cached_artifacts, resolve_artifacts
+from sdcpp_hooks.artifacts import (
+    collect_fetchable_uris,
+    list_cached_artifacts,
+    resolve_artifacts,
+)
 from sdcpp_hooks.contract import GenerateRequest
 from sdcpp_hooks.hardware import collect_run_environment
 from sdcpp_hooks.hooks import generate, use_engine, use_models
@@ -28,6 +32,7 @@ IMAGE_TAG = os.environ.get(
 )
 GPU = os.environ.get("SDCPP_GPU", "L4")
 MODEL_ROOT = Path(os.environ.get("SDCPP_MODEL_ROOT", "/models"))
+IDLE_SECONDS = int(os.environ.get("SDCPP_IDLE_SECONDS", "10"))
 
 volume = modal.Volume.from_name("sdcpp-models", create_if_missing=True)
 
@@ -82,24 +87,22 @@ def _secrets() -> list[modal.Secret]:
     return []
 
 
-storage_app = modal.App("sdcpp-storage", image=_cpu_image())
-gpu_app = modal.App("sdcpp-cli", image=_cuda_image())
+def _idle_kwargs() -> dict:
+    return {
+        "min_containers": 0,
+        "buffer_containers": 0,
+        "scaledown_window": IDLE_SECONDS,
+    }
 
 
-@storage_app.function(
-    timeout=2 * 60 * 60,
-    volumes={str(MODEL_ROOT): volume},
-    secrets=_secrets(),
-)
-def pull(uris: list[str]) -> list[dict]:
-    volume.reload()
+def _pull_uris(uris: list[str]) -> list[dict]:
     labeled = {f"uri_{index}": uri for index, uri in enumerate(uris)}
     resolved = resolve_artifacts(
         labeled,
         cache_dir=MODEL_ROOT,
         artifact_fields=set(labeled),
+        allow_download=True,
     )
-    volume.commit()
     rows = []
     for index, uri in enumerate(uris):
         path = resolved[f"uri_{index}"]
@@ -113,7 +116,42 @@ def pull(uris: list[str]) -> list[dict]:
     return rows
 
 
-@storage_app.function(volumes={str(MODEL_ROOT): volume})
+storage_app = modal.App("sdcpp-storage", image=_cpu_image())
+gpu_app = modal.App("sdcpp-cli", image=_cuda_image())
+
+
+@storage_app.function(
+    timeout=2 * 60 * 60,
+    volumes={str(MODEL_ROOT): volume},
+    secrets=_secrets(),
+    **_idle_kwargs(),
+)
+def pull(uris: list[str]) -> list[dict]:
+    volume.reload()
+    rows = _pull_uris(uris)
+    volume.commit()
+    return rows
+
+
+@storage_app.function(
+    timeout=2 * 60 * 60,
+    volumes={str(MODEL_ROOT): volume},
+    secrets=_secrets(),
+    **_idle_kwargs(),
+)
+def ensure_artifacts(payload: dict) -> list[dict]:
+    request = GenerateRequest.from_dict(payload)
+    request.validate()
+    uris = collect_fetchable_uris(request.to_dict(), request.extra_cli)
+    if not uris:
+        return []
+    volume.reload()
+    rows = _pull_uris(uris)
+    volume.commit()
+    return rows
+
+
+@storage_app.function(volumes={str(MODEL_ROOT): volume}, **_idle_kwargs())
 def list_storage() -> list[dict]:
     volume.reload()
     return list_cached_artifacts(MODEL_ROOT)
@@ -122,6 +160,7 @@ def list_storage() -> list[dict]:
 @storage_app.function(
     timeout=30 * 60,
     volumes={str(MODEL_ROOT): volume},
+    **_idle_kwargs(),
 )
 def put_files(files: list[dict]) -> list[dict]:
     volume.reload()
@@ -143,7 +182,7 @@ def put_files(files: list[dict]) -> list[dict]:
     return rows
 
 
-@gpu_app.function()
+@gpu_app.function(**_idle_kwargs())
 def probe() -> dict:
     help_text, binary = probe_cli_help()
     engine = use_engine(help_text=help_text, binary=binary)
@@ -156,9 +195,8 @@ def probe() -> dict:
 @gpu_app.cls(
     gpu=GPU,
     timeout=60 * 60,
-    scaledown_window=120,
     volumes={str(MODEL_ROOT): volume},
-    secrets=_secrets(),
+    **_idle_kwargs(),
 )
 class SDEngine:
     @modal.enter()
@@ -172,8 +210,7 @@ class SDEngine:
         request = GenerateRequest.from_dict(payload)
         request.validate()
         volume.reload()
-        models = use_models(request, cache_dir=MODEL_ROOT)
-        volume.commit()
+        models = use_models(request, cache_dir=MODEL_ROOT, allow_download=False)
         output_path = Path("/tmp/sdcpp-output.png")
         result = generate(
             request,
