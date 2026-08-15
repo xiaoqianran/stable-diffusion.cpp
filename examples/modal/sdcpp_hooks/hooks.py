@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -7,6 +8,7 @@ from .adapt import adapt_request
 from .artifacts import FetchFn, TokenFn, is_fetchable, resolve_artifacts
 from .contract import GenerateRequest, GenerateResult
 from .discover import EngineCapabilities, discover_engine
+from .hardware import collect_run_environment
 
 
 ProbeFn = Callable[[], str]
@@ -75,13 +77,17 @@ def generate(
 ) -> GenerateResult:
     request.validate()
     planned = adapt_request(_with_resolved_paths(request, models), engine, str(output_path))
+    started = time.perf_counter()
     files = run(planned.argv, Path(output_path).parent)
+    duration_ms = int((time.perf_counter() - started) * 1000)
     return GenerateResult(
         images=[path.read_bytes() for path in files],
         argv=planned.argv,
         dropped_fields=planned.dropped_fields,
         engine_id=engine.binary,
         seed=request.seed,
+        duration_ms=duration_ms,
+        host=collect_run_environment(help_text=engine.raw_help, binary=engine.binary),
     )
 
 

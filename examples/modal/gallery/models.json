@@ -1,8 +1,12 @@
 {
   "families": [
     {"id": "sd15", "label": "Stable Diffusion 1.5", "kind": "image"},
-    {"id": "sd2", "label": "Stable Diffusion 2.x", "kind": "image"},
+    {"id": "sd2", "label": "Stable Diffusion 2.1", "kind": "image"},
+    {"id": "sd-turbo", "label": "SD-Turbo", "kind": "image"},
     {"id": "sdxl", "label": "SDXL", "kind": "image"},
+    {"id": "sdxl-turbo", "label": "SDXL-Turbo", "kind": "image"},
+    {"id": "ssd-1b", "label": "SSD-1B", "kind": "image"},
+    {"id": "dreamlike-photoreal", "label": "Dreamlike Photoreal 2.0", "kind": "image"},
     {"id": "sd3", "label": "SD3 / SD3.5", "kind": "image"},
     {"id": "flux", "label": "FLUX.1", "kind": "image"},
     {"id": "flux2", "label": "FLUX.2", "kind": "image"},

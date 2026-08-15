@@ -74,6 +74,31 @@ def test_parse_generate_can_use_a_recipe_without_an_explicit_model():
     assert command.to_payload()["width"] == 512
 
 
+def test_parse_generate_accepts_the_five_new_recipes():
+    recipes = {
+        "sd2": "Manojb/stable-diffusion-2-1-base",
+        "sd-turbo": "stabilityai/sd-turbo",
+        "sdxl-turbo": "stabilityai/sdxl-turbo",
+        "ssd-1b": "segmind/SSD-1B",
+        "dreamlike-photoreal": "dreamlike-art/dreamlike-photoreal-2.0",
+    }
+    for name, marker in recipes.items():
+        command = parse_argv(["generate", "-p", "a test image", "--recipe", name])
+        payload = command.to_payload()
+        assert marker in payload["model"]
+        assert payload["width"] == 512
+        assert payload["steps"]
+
+
+def test_sd2_recipe_keeps_v_prediction_when_extra_flags_are_added():
+    command = parse_argv(
+        ["generate", "-p", "a fox", "--recipe", "sd2", "--type", "f16"]
+    )
+    payload = command.to_payload()
+    assert payload["extra_cli"]["--prediction"] == "v"
+    assert payload["extra_cli"]["--type"] == "f16"
+
+
 def test_parse_generate_forwards_sd_cli_artifact_and_extra_flags():
     command = parse_argv(
         [

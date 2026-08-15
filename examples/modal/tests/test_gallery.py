@@ -1,6 +1,9 @@
 from sdcpp_hooks.gallery import (
     ImageRecord,
     build_site,
+    card_host_line,
+    card_meta_line,
+    format_duration_ms,
     image_id,
     paginate,
     record_paths,
@@ -71,3 +74,67 @@ def test_build_site_writes_model_pages_and_pagination(tmp_path):
     assert "prompt 2" in html
     assert "Page 1 / 2" in html
     assert image_id("sd15", 1, b"png").endswith("-sd15-1-" + __import__("hashlib").sha256(b"png").hexdigest()[:8])
+
+
+def test_image_record_hydrates_host_fields_from_extra():
+    record = ImageRecord.from_dict(
+        {
+            "id": "x",
+            "model": "sd2",
+            "path": "images/sd2/x.png",
+            "prompt": "a red fox",
+            "extra": {
+                "duration_ms": 12400,
+                "gpu_name": "NVIDIA L4",
+                "cuda_version": "12.4",
+                "torch_version": "not installed (sd-cli uses ggml, not PyTorch)",
+                "driver_version": "550.90.07",
+                "sd_cli_version": "stable-diffusion.cpp",
+                "python_version": "3.12.3",
+                "modal_gpu": "L4",
+            },
+        }
+    )
+
+    assert record.duration_ms == 12400
+    assert record.gpu_name == "NVIDIA L4"
+    assert record.cuda_version == "12.4"
+    assert "ggml" in record.torch_version
+    assert format_duration_ms(12400) == "12.4s"
+    assert "NVIDIA L4" in card_host_line(record)
+    assert "CUDA 12.4" in card_host_line(record)
+    assert "torch" in card_host_line(record)
+    assert "driver 550.90.07" in card_host_line(record)
+    assert "python 3.12.3" in card_meta_line(record)
+    assert "modal L4" in card_meta_line(record)
+
+
+def test_build_site_shows_prompt_and_run_environment(tmp_path):
+    record = ImageRecord(
+        id="fox-1",
+        model="sd2",
+        path="images/sd2/fox-1.png",
+        prompt="a red fox sitting on a mossy forest log",
+        seed=7,
+        steps=8,
+        cfg_scale=7.0,
+        width=512,
+        height=512,
+        created_at="2026-08-15T18:00:00+00:00",
+        duration_ms=8450,
+        gpu_name="NVIDIA L4",
+        cuda_version="12.4",
+        torch_version="not installed (sd-cli uses ggml, not PyTorch)",
+        extra={"driver_version": "550.90.07", "modal_gpu": "L4"},
+    )
+    write_sidecar(tmp_path, record, b"png")
+
+    out = tmp_path / "site"
+    build_site(tmp_path, out, per_page=12)
+    html = (out / "index.html").read_text(encoding="utf-8")
+    assert "a red fox sitting on a mossy forest log" in html
+    assert "8.45s" in html
+    assert "NVIDIA L4" in html
+    assert "CUDA 12.4" in html
+    assert "torch not installed (sd-cli uses ggml, not PyTorch)" in html
+    assert "class=\"host\"" in html

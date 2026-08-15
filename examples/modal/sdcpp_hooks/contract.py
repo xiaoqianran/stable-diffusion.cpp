@@ -60,3 +60,5 @@ class GenerateResult:
     dropped_fields: list[str]
     engine_id: str
     seed: int | None = None
+    duration_ms: int | None = None
+    host: dict[str, Any] = field(default_factory=dict)

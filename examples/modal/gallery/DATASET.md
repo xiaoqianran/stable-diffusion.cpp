@@ -25,3 +25,5 @@ images/
 ```
 
 `models.json` lists known families (SD, FLUX, Qwen, Wan, ...). Unknown slugs still render on Pages under Custom.
+
+Each sidecar also records the prompt plus run facts used on the Pages card: `duration_ms`, `gpu_name`, `cuda_version`, `torch_version`, and extras such as NVIDIA driver, sd-cli version, Python, Modal GPU type, and the container image.

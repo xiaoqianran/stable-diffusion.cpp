@@ -41,7 +41,7 @@ images/
   wan/<id>.png
 ```
 
-Sidecar JSON keeps prompt, seed, steps, and size. GitHub Pages rebuilds a paginated gallery from these files.
+Sidecar JSON keeps prompt, seed, steps, size, run duration, GPU name, CUDA version, and torch version. GitHub Pages rebuilds a paginated gallery from these files.
 """
 
 
@@ -87,12 +87,17 @@ def publish_image(
     repo_id: str = DEFAULT_DATASET,
     token: str | None = None,
     created_at: datetime | None = None,
+    duration_ms: int | None = None,
+    gpu_name: str = "",
+    cuda_version: str = "",
+    torch_version: str = "",
 ) -> ImageRecord:
     data = Path(image_path).read_bytes()
     model_id = slugify_model(model)
     when = created_at or utc_now()
     record_id = image_id(model_id, seed if seed is not None else -1, data, when)
     png_rel, json_rel = record_paths(model_id, record_id)
+    extra = dict(extra or {})
     record = ImageRecord(
         id=record_id,
         model=model_id,
@@ -105,7 +110,11 @@ def publish_image(
         height=height,
         cfg_scale=cfg_scale,
         created_at=when.astimezone(timezone.utc).isoformat(),
-        extra=extra or {},
+        extra=extra,
+        duration_ms=duration_ms if duration_ms is not None else extra.get("duration_ms"),
+        gpu_name=gpu_name or str(extra.get("gpu_name") or ""),
+        cuda_version=cuda_version or str(extra.get("cuda_version") or ""),
+        torch_version=torch_version or str(extra.get("torch_version") or ""),
     )
     api = _api(token)
     api.create_repo(repo_id, repo_type="dataset", exist_ok=True, private=False)

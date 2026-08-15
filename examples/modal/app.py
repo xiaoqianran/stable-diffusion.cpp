@@ -15,6 +15,7 @@ import modal
 
 from sdcpp_hooks.artifacts import list_cached_artifacts, resolve_artifacts
 from sdcpp_hooks.contract import GenerateRequest
+from sdcpp_hooks.hardware import collect_run_environment
 from sdcpp_hooks.hooks import generate, use_engine, use_models
 from sdcpp_hooks.probe import probe_cli_help
 from sdcpp_hooks.runner import run_cli
@@ -60,7 +61,11 @@ def _cpu_image() -> modal.Image:
 
 
 def _cuda_image() -> modal.Image:
-    return _with_hooks(modal.Image.from_registry(IMAGE_TAG, add_python="3.12").entrypoint([]))
+    return _with_hooks(
+        modal.Image.from_registry(IMAGE_TAG, add_python="3.12")
+        .entrypoint([])
+        .env({"SDCPP_GPU": GPU, "SDCPP_IMAGE": IMAGE_TAG})
+    )
 
 
 def _secrets() -> list[modal.Secret]:
@@ -177,10 +182,23 @@ class SDEngine:
             run=run_cli,
             output_path=output_path,
         )
+        host = dict(result.host or collect_run_environment(
+            help_text=self.engine.raw_help,
+            binary=self.binary,
+        ))
+        host.setdefault("modal_gpu", GPU)
+        host.setdefault("sdcpp_image", IMAGE_TAG)
         return {
             "images": [base64.b64encode(image).decode("ascii") for image in result.images],
             "argv": result.argv,
             "dropped_fields": result.dropped_fields,
             "engine_id": result.engine_id,
             "seed": result.seed,
+            "duration_ms": result.duration_ms,
+            "host": host,
+            "width": request.width,
+            "height": request.height,
+            "steps": request.steps,
+            "cfg_scale": request.cfg_scale,
+            "model": request.model or request.diffusion_model,
         }

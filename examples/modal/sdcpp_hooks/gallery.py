@@ -65,6 +65,10 @@ class ImageRecord:
     cfg_scale: float | None = None
     created_at: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    duration_ms: int | None = None
+    gpu_name: str = ""
+    cuda_version: str = ""
+    torch_version: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -73,7 +77,19 @@ class ImageRecord:
     def from_dict(cls, data: dict[str, Any]) -> ImageRecord:
         known = {item.name for item in fields(cls)}
         payload = {key: value for key, value in data.items() if key in known}
-        payload.setdefault("extra", {})
+        extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
+        payload["extra"] = dict(extra)
+        if payload.get("duration_ms") in (None, "", 0, "0"):
+            payload["duration_ms"] = _optional_int(extra.get("duration_ms"))
+        payload.setdefault("gpu_name", "")
+        payload.setdefault("cuda_version", "")
+        payload.setdefault("torch_version", "")
+        if not payload.get("gpu_name"):
+            payload["gpu_name"] = str(extra.get("gpu_name") or "")
+        if not payload.get("cuda_version"):
+            payload["cuda_version"] = str(extra.get("cuda_version") or "")
+        if not payload.get("torch_version"):
+            payload["torch_version"] = str(extra.get("torch_version") or "")
         return cls(**payload)
 
 
@@ -112,6 +128,61 @@ def paginate(items: list[ImageRecord], per_page: int = PER_PAGE) -> list[list[Im
     if not items:
         return [[]]
     return [items[index : index + per_page] for index in range(0, len(items), per_page)]
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, "", 0, "0"):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_duration_ms(duration_ms: int | None) -> str:
+    if not duration_ms:
+        return ""
+    seconds = duration_ms / 1000.0
+    return f"{seconds:.1f}s" if seconds >= 10 else f"{seconds:.2f}s"
+
+
+def card_host_line(record: ImageRecord) -> str:
+    extra = record.extra if isinstance(record.extra, dict) else {}
+    bits: list[str] = []
+    duration = format_duration_ms(record.duration_ms or _optional_int(extra.get("duration_ms")))
+    if duration:
+        bits.append(duration)
+    gpu = record.gpu_name or extra.get("gpu_name")
+    if gpu:
+        bits.append(str(gpu))
+    cuda = record.cuda_version or extra.get("cuda_version")
+    if cuda:
+        bits.append(f"CUDA {cuda}")
+    torch_v = record.torch_version or extra.get("torch_version")
+    if torch_v:
+        bits.append(f"torch {torch_v}")
+    driver = extra.get("driver_version") or extra.get("nvidia_driver")
+    if driver:
+        bits.append(f"driver {driver}")
+    sd_cli = extra.get("sd_cli_version")
+    if sd_cli:
+        bits.append(f"sd-cli {sd_cli}")
+    return " · ".join(bits)
+
+
+def card_meta_line(record: ImageRecord, families: Iterable[dict[str, str]] | None = None) -> str:
+    extra = record.extra if isinstance(record.extra, dict) else {}
+    bits = [
+        family_label(record.model, families),
+        f"seed {record.seed}" if record.seed is not None else "",
+        f"{record.steps} steps" if record.steps else "",
+        f"cfg {record.cfg_scale:g}" if record.cfg_scale else "",
+        f"{record.width}×{record.height}" if record.width and record.height else "",
+        f"python {extra['python_version']}" if extra.get("python_version") else "",
+        f"modal {extra['modal_gpu']}" if extra.get("modal_gpu") else "",
+        record.created_at or "",
+    ]
+    return " · ".join(part for part in bits if part)
 
 
 def _rel(depth: int, dest: str) -> str:
@@ -172,21 +243,17 @@ def _render_page(
     cards = []
     for record in records:
         prompt = html.escape(record.prompt or "(no prompt)")
-        meta = " · ".join(
-            part
-            for part in (
-                html.escape(family_label(record.model, families)),
-                f"seed {record.seed}" if record.seed is not None else "",
-                f"{record.steps} steps" if record.steps else "",
-                f"{record.width}×{record.height}" if record.width and record.height else "",
-            )
-            if part
-        )
+        host = html.escape(card_host_line(record))
+        meta = html.escape(card_meta_line(record, families))
+        host_html = f'<p class="host">{host}</p>' if host else ""
         cards.append(
             f"""<article class="card">
-  <img src="{html.escape(_rel(depth, record.path))}" alt="{prompt}" loading="lazy">
+  <a href="{html.escape(_rel(depth, record.path))}" target="_blank" rel="noopener">
+    <img src="{html.escape(_rel(depth, record.path))}" alt="{prompt}" loading="lazy">
+  </a>
   <div class="meta">
     <p class="prompt">{prompt}</p>
+    {host_html}
     <p class="sub">{meta}</p>
   </div>
 </article>"""
@@ -252,6 +319,7 @@ body {
 .eyebrow { letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); font-size: 12px; }
 h1 { margin: 0 0 8px; font-size: 36px; }
 .lede, .sub, .empty { color: var(--muted); }
+.host { color: #c4b5fd; font-size: 13px; margin: 0 0 6px; line-height: 1.4; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 24px 0; }
 .kind { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-left: 8px; }
 .chip, .pager a, .num {

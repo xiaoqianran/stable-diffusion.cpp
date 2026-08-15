@@ -97,6 +97,11 @@ export HF_TOKEN=...
 python3 sdcpp_modal.py publish cat.png --model-id sd15 -p "a lovely cat" --seed 42
 ```
 
+`generate --publish` writes the prompt plus run facts into the sidecar: duration,
+GPU name, CUDA version, torch version (or a note that sd-cli uses ggml), NVIDIA
+driver, sd-cli version, Python, Modal GPU type, and the container image. Pages
+cards show those fields under the prompt.
+
 GitHub Actions workflow `.github/workflows/gallery-pages.yml` downloads that
 dataset and deploys a paginated gallery to GitHub Pages (12 images per page,
 filters for current and future model families):

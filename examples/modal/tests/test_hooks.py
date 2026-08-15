@@ -87,6 +87,10 @@ def test_generate_hook_runs_adapted_argv_and_collects_images(tmp_path, current_h
     assert result.argv[result.argv.index("--steps") + 1] == "12"
     assert result.dropped_fields == []
     assert seen["argv"][0] == "/sd-cli"
+    assert result.duration_ms is not None
+    assert result.duration_ms >= 0
+    assert "torch_version" in result.host
+    assert "gpu_name" in result.host
 
 
 def test_generate_forwards_resolved_extra_cli_paths(tmp_path, current_help_text):
