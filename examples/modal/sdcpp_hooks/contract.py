@@ -29,10 +29,14 @@ class GenerateRequest:
     t5xxl: str | None = None
     llm: str | None = None
     llm_vision: str | None = None
+    clip_vision: str | None = None
     lora_dir: str | None = None
+    lora: str | None = None
     init_image: str | None = None
+    control_net: str | None = None
+    taesd: str | None = None
+    upscale_model: str | None = None
     extra_cli: dict[str, Any] = field(default_factory=dict)
-    extra_http: dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
         if not self.prompt or not str(self.prompt).strip():

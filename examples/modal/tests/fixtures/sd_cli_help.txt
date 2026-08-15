@@ -11,10 +11,15 @@ Context Options:
   -m, --model <string>                          path to full model
   --clip_l <string>                             path to the clip-l text encoder
   --clip_g <string>                             path to the clip-g text encoder
+  --clip_vision <string>                        path to the clip-vision encoder
   --t5xxl <string>                              path to the t5xxl text encoder
   --llm <string>                                path to the llm text encoder
+  --llm_vision <string>                         path to the llm vit
   --diffusion-model <string>                    path to the standalone diffusion model
   --vae <string>                                path to standalone vae model
+  --taesd <string>                              path to taesd
+  --control-net <string>                        path to control net model
+  --upscale-model <string>                      path to esrgan model
   --lora-model-dir <string>                     lora model directory
   -t, --threads <int>                           number of threads to use during computation
   --offload-to-cpu                              offload weights to cpu

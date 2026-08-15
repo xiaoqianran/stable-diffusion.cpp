@@ -16,6 +16,31 @@ RECIPES: dict[str, dict[str, Any]] = {
 }
 
 
+def recipe_uris(name: str) -> list[str]:
+    if name not in RECIPES:
+        known = ", ".join(sorted(RECIPES))
+        raise KeyError(f"unknown recipe {name!r}; known: {known}")
+    uris: list[str] = []
+    for key in (
+        "model",
+        "diffusion_model",
+        "vae",
+        "clip_l",
+        "clip_g",
+        "clip_vision",
+        "t5xxl",
+        "llm",
+        "llm_vision",
+        "taesd",
+        "control_net",
+        "upscale_model",
+    ):
+        value = RECIPES[name].get(key)
+        if value:
+            uris.append(str(value))
+    return uris
+
+
 def apply_recipe(name: str, **overrides: Any) -> GenerateRequest:
     if name not in RECIPES:
         known = ", ".join(sorted(RECIPES))

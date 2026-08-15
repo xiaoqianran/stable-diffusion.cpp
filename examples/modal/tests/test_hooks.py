@@ -19,6 +19,25 @@ def test_use_engine_probes_help_text_once():
     assert calls["n"] == 2
 
 
+def test_use_models_resolves_extra_cli_uris(tmp_path):
+    request = GenerateRequest(
+        prompt="a cat",
+        model="hf://org/repo/model.safetensors",
+        extra_cli={"--taesd": "hf://org/repo/tae.safetensors", "--verbose": True},
+    )
+
+    def fetch(url, dest, headers):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"weights")
+        return dest
+
+    models = use_models(request, cache_dir=tmp_path, fetch=fetch)
+
+    assert models["model"].read_bytes() == b"weights"
+    assert models["--taesd"].read_bytes() == b"weights"
+    assert "--verbose" not in models
+
+
 def test_use_models_only_resolves_artifact_fields(tmp_path):
     request = GenerateRequest(
         prompt="a cat",
@@ -68,6 +87,37 @@ def test_generate_hook_runs_adapted_argv_and_collects_images(tmp_path, current_h
     assert result.argv[result.argv.index("--steps") + 1] == "12"
     assert result.dropped_fields == []
     assert seen["argv"][0] == "/sd-cli"
+
+
+def test_generate_forwards_resolved_extra_cli_paths(tmp_path, current_help_text):
+    output_png = tmp_path / "out.png"
+    local_model = tmp_path / "sd.safetensors"
+    local_model.write_bytes(b"weights")
+
+    def fetch(url, dest, headers):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"tae")
+        return dest
+
+    def run(argv, workdir):
+        dest = Path(argv[argv.index("--output") + 1])
+        dest.write_bytes(b"png")
+        return [dest]
+
+    request = GenerateRequest(
+        prompt="a cat",
+        model=str(local_model),
+        extra_cli={"--taesd": "hf://org/repo/tae.safetensors"},
+    )
+    result = generate(
+        request,
+        engine=use_engine(help_text=current_help_text, binary="/sd-cli"),
+        models=use_models(request, cache_dir=tmp_path / "cache", fetch=fetch),
+        run=run,
+        output_path=output_png,
+    )
+
+    assert result.argv[result.argv.index("--taesd") + 1].endswith("tae.safetensors")
 
 
 def test_use_sdcpp_composes_the_three_hooks(tmp_path, current_help_text):

@@ -30,8 +30,12 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "t5xxl": ("--t5xxl",),
     "llm": ("--llm",),
     "llm_vision": ("--llm_vision", "--llm-vision"),
+    "clip_vision": ("--clip_vision", "--clip-vision"),
     "lora_dir": ("--lora-model-dir",),
     "init_image": ("--init-img", "--init-image", "-i"),
+    "control_net": ("--control-net", "--control_net"),
+    "taesd": ("--taesd", "--tae"),
+    "upscale_model": ("--upscale-model",),
     "output": ("--output", "-o"),
 }
 
@@ -92,8 +96,12 @@ def adapt_request(
         "t5xxl": request.t5xxl,
         "llm": request.llm,
         "llm_vision": request.llm_vision,
+        "clip_vision": request.clip_vision,
         "lora_dir": request.lora_dir,
         "init_image": request.init_image,
+        "control_net": request.control_net,
+        "taesd": request.taesd,
+        "upscale_model": request.upscale_model,
         "output": output_path,
     }
 

@@ -30,6 +30,21 @@ def test_adapt_request_maps_stable_fields_to_current_cli_flags(current_help_text
     assert "steps" not in planned.dropped_fields
 
 
+def test_adapt_request_maps_control_net_and_taesd(current_help_text):
+    engine = discover_engine(current_help_text, binary="/sd-cli")
+    request = GenerateRequest(
+        prompt="a cat",
+        model="/models/sd15.safetensors",
+        control_net="/models/control.safetensors",
+        taesd="/models/tae.safetensors",
+    )
+
+    planned = adapt_request(request, engine, output_path="/tmp/out.png")
+
+    assert planned.argv[planned.argv.index("--control-net") + 1] == "/models/control.safetensors"
+    assert planned.argv[planned.argv.index("--taesd") + 1] == "/models/tae.safetensors"
+
+
 def test_adapt_request_uses_aliases_when_upstream_renames_common_flags(renamed_help_text):
     engine = discover_engine(renamed_help_text, binary="/sd-cli")
     request = GenerateRequest(

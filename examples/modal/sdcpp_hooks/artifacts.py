@@ -102,6 +102,13 @@ class ArtifactRef:
         raise ValueError(f"cannot place {self.raw}")
 
 
+def is_fetchable(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return text.startswith(("hf://", "civitai://", "https://", "http://"))
+
+
 def default_token_for_url(url: str) -> str | None:
     if "huggingface.co" in url or "hf-mirror.com" in url:
         return os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")

@@ -30,6 +30,10 @@ Vulkan:
 docker build -f docker/Dockerfile.vulkan -t sd .
 ```
 
+## Run on Modal
+
+If the local machine cannot host the model, `examples/modal` wraps the official CUDA image and stores checkpoints on a Modal Volume. See [the Modal CLI](../examples/modal/README.md).
+
 ## Run locally built image's CLI
 
 ```shell

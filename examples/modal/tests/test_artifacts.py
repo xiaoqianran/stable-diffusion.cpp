@@ -1,6 +1,14 @@
 from pathlib import Path
 
-from sdcpp_hooks.artifacts import ArtifactRef, resolve_artifacts
+from sdcpp_hooks.artifacts import ArtifactRef, is_fetchable, resolve_artifacts
+
+
+def test_is_fetchable_accepts_remote_uris_only():
+    assert is_fetchable("hf://org/repo/a.safetensors")
+    assert is_fetchable("civitai://128713")
+    assert is_fetchable("https://example.com/a.safetensors")
+    assert not is_fetchable("/models/local.safetensors")
+    assert not is_fetchable(True)
 
 
 def test_parse_huggingface_uri_with_optional_revision():

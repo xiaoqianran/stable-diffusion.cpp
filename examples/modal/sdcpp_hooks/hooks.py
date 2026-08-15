@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from .adapt import adapt_request
-from .artifacts import FetchFn, TokenFn, resolve_artifacts
+from .artifacts import FetchFn, TokenFn, is_fetchable, resolve_artifacts
 from .contract import GenerateRequest, GenerateResult
 from .discover import EngineCapabilities, discover_engine
 
@@ -29,18 +29,39 @@ def use_models(
     fetch: FetchFn | None = None,
     token_for_url: TokenFn | None = None,
 ) -> dict[str, Path]:
-    return resolve_artifacts(
+    resolved = resolve_artifacts(
         request.to_dict(),
         cache_dir=cache_dir,
         fetch=fetch,
         token_for_url=token_for_url,
     )
+    extra = {
+        key: value
+        for key, value in request.extra_cli.items()
+        if is_fetchable(value)
+    }
+    if extra:
+        resolved.update(
+            resolve_artifacts(
+                extra,
+                cache_dir=cache_dir,
+                fetch=fetch,
+                token_for_url=token_for_url,
+                artifact_fields=set(extra),
+            )
+        )
+    return resolved
 
 
 def _with_resolved_paths(request: GenerateRequest, models: dict[str, Path]) -> GenerateRequest:
     data = request.to_dict()
+    extra = dict(data.get("extra_cli") or {})
     for key, path in models.items():
-        data[key] = str(path)
+        if key in extra or str(key).startswith("-"):
+            extra[key] = str(path)
+        else:
+            data[key] = str(path)
+    data["extra_cli"] = extra
     return GenerateRequest.from_dict(data)
 
 

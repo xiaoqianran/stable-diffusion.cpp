@@ -3,9 +3,16 @@ import pytest
 from sdcpp_hooks.cli import parse_argv
 
 
-def test_parse_pull_requires_uris():
+def test_parse_pull_requires_uris_or_recipe():
     with pytest.raises(SystemExit):
         parse_argv(["pull"])
+
+
+def test_parse_pull_can_use_a_recipe():
+    command = parse_argv(["pull", "--recipe", "sd15"])
+
+    assert command.action == "pull"
+    assert command.uris[0].startswith("hf://")
 
 
 def test_parse_pull_collects_one_or_more_uris():
@@ -65,3 +72,33 @@ def test_parse_generate_can_use_a_recipe_without_an_explicit_model():
 
     assert command.to_payload()["model"].startswith("hf://")
     assert command.to_payload()["width"] == 512
+
+
+def test_parse_generate_forwards_sd_cli_artifact_and_extra_flags():
+    command = parse_argv(
+        [
+            "generate",
+            "-p",
+            "a cat",
+            "--vae",
+            "hf://org/repo/vae.safetensors",
+            "--control-net",
+            "hf://org/repo/control.safetensors",
+            "--offload-to-cpu",
+            "--type",
+            "f16",
+        ]
+    )
+
+    payload = command.to_payload()
+    assert payload["vae"] == "hf://org/repo/vae.safetensors"
+    assert payload["control_net"] == "hf://org/repo/control.safetensors"
+    assert payload["extra_cli"]["--offload-to-cpu"] is True
+    assert payload["extra_cli"]["--type"] == "f16"
+
+
+def test_parse_put_collects_local_files():
+    command = parse_argv(["put", "cat.png", "mask.png"])
+
+    assert command.action == "put"
+    assert command.files == ["cat.png", "mask.png"]
