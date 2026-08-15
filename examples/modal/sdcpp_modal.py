@@ -7,7 +7,16 @@ import base64
 import sys
 from pathlib import Path
 
-from app import SDEngine, gpu_app, list_storage, probe, pull, put_files, storage_app
+from app import (
+    SDEngine,
+    ensure_artifacts,
+    gpu_app,
+    list_storage,
+    probe,
+    pull,
+    put_files,
+    storage_app,
+)
 from sdcpp_hooks.cli import parse_argv
 from sdcpp_hooks.contract import ValidationError
 from sdcpp_hooks.hardware import format_host_summary
@@ -79,6 +88,10 @@ def main(argv: list[str] | None = None) -> int:
     except (KeyError, ValidationError) as exc:
         print(exc, file=sys.stderr)
         return 2
+
+    with storage_app.run():
+        for row in ensure_artifacts.remote(payload):
+            print(f"cpu storage {row['uri']} -> {row['path']} ({row['bytes']} bytes)")
 
     with gpu_app.run():
         result = SDEngine().generate.remote(payload)

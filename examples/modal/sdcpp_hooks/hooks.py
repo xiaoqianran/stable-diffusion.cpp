@@ -30,12 +30,14 @@ def use_models(
     cache_dir: Path,
     fetch: FetchFn | None = None,
     token_for_url: TokenFn | None = None,
+    allow_download: bool = True,
 ) -> dict[str, Path]:
     resolved = resolve_artifacts(
         request.to_dict(),
         cache_dir=cache_dir,
         fetch=fetch,
         token_for_url=token_for_url,
+        allow_download=allow_download,
     )
     extra = {
         key: value
@@ -50,6 +52,7 @@ def use_models(
                 fetch=fetch,
                 token_for_url=token_for_url,
                 artifact_fields=set(extra),
+                allow_download=allow_download,
             )
         )
     return resolved

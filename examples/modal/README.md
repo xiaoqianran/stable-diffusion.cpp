@@ -41,10 +41,12 @@ python3 sdcpp_modal.py publish cat.png --recipe sd15 -p "a lovely cat"
 | `put` | CPU | upload a small local file (init image, mask) to `uploads/` |
 | `ls` | CPU | list files already on that volume |
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
-| `generate` | GPU (`SDCPP_GPU`, default `L4`) | run `sd-cli` and write a local PNG |
+| `generate` | CPU, then GPU (`SDCPP_GPU`, default `L4`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 
-`generate` downloads a missing URI onto the same volume before it runs `sd-cli`.
+`generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
+
+Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
 
 Common `sd-cli` flags are first-class (`--vae`, `--diffusion-model`, `--init-img`, `--control-net`, `--taesd`, `--sampling-method`, ...). Any other remote flag can be appended and is forwarded if `probe` sees it:
 
@@ -79,6 +81,7 @@ Then pass `--model /models/hf/local/v1-5-pruned-emaonly.safetensors`.
 | --- | --- |
 | `SDCPP_IMAGE` | `ghcr.io/leejet/stable-diffusion.cpp:master-cuda` |
 | `SDCPP_GPU` | `L4` |
+| `SDCPP_IDLE_SECONDS` | `10` (CPU and GPU scale to zero after this idle window) |
 | `SDCPP_SECRET` | `sdcpp-tokens` (used only if that Modal secret exists) |
 | `HF_ENDPOINT` | `https://huggingface.co` |
 | `SDCPP_GALLERY_DATASET` | `seachen/stable-diffusion-cpp-gallery` |
