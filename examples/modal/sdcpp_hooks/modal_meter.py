@@ -56,7 +56,7 @@ def billed_app(app: Any, role: str) -> Iterator[str]:
     book = official_price_book()
     tokens = begin_trace(trace_id, book)
     plan = default_plan(
-        f"session:{role}",
+        role,
         notes="app.run window; includes image build and connect; GPU is priced on remote/container",
     )
     try:
