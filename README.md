@@ -151,6 +151,7 @@ For runtime and parameter backend placement, see the [backend selection guide](.
 - [LoRA](./docs/lora.md)
 - [LCM/LCM-LoRA](./docs/lcm.md)
 - [Docker](./docs/docker.md)
+- [Modal](./examples/modal/README.md)
 - [Quantization and GGUF](./docs/quantization_and_gguf.md)
 - [INT8 convrot safetensors](./docs/int8_convrot.md)
 - [Inference acceleration via caching](./docs/caching.md)
