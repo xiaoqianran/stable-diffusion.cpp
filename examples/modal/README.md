@@ -101,6 +101,16 @@ Optional environment:
 `POST` the same `GenerateRequest` JSON to the `api_generate` endpoint after
 `modal deploy app.py`.
 
+## Modly hook
+
+`modly_extension/` is a Modly `manifest.json` + `generator.py` adapter. It does
+not vendor `sd-cli`. It calls the deployed `sdcpp-hooks` Modal class, so the
+Modly backend can keep its existing extension loader while sd.cpp flag churn
+stays isolated behind `--help` discovery.
+
+Copy that folder onto volume `modly-extensions` as `sdcpp/` after
+`modal deploy app.py`.
+
 ## What this package will not do
 
 - Track every new sampler, DiT family, or server route in `examples/server`
