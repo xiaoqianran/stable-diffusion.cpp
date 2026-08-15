@@ -13,6 +13,43 @@ RECIPES: dict[str, dict[str, Any]] = {
         "steps": 20,
         "cfg_scale": 7.0,
     },
+    "sd2": {
+        "model": "hf://Manojb/stable-diffusion-2-1-base/v2-1_512-ema-pruned.safetensors",
+        "width": 512,
+        "height": 512,
+        "steps": 20,
+        "cfg_scale": 7.0,
+    },
+    "sd-turbo": {
+        "model": "hf://stabilityai/sd-turbo/sd_turbo.safetensors",
+        "width": 512,
+        "height": 512,
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+    },
+    "sdxl-turbo": {
+        "model": "hf://stabilityai/sdxl-turbo/sd_xl_turbo_1.0_fp16.safetensors",
+        "width": 512,
+        "height": 512,
+        "steps": 4,
+        "cfg_scale": 1.0,
+        "sampling_method": "euler",
+    },
+    "ssd-1b": {
+        "model": "hf://segmind/SSD-1B/SSD-1B.safetensors",
+        "width": 512,
+        "height": 512,
+        "steps": 8,
+        "cfg_scale": 7.0,
+    },
+    "dreamlike-photoreal": {
+        "model": "hf://dreamlike-art/dreamlike-photoreal-2.0/dreamlike-photoreal-2.0.safetensors",
+        "width": 512,
+        "height": 512,
+        "steps": 8,
+        "cfg_scale": 7.0,
+    },
 }
 
 
@@ -46,7 +83,16 @@ def apply_recipe(name: str, **overrides: Any) -> GenerateRequest:
         known = ", ".join(sorted(RECIPES))
         raise KeyError(f"unknown recipe {name!r}; known: {known}")
     payload = dict(RECIPES[name])
+    recipe_extra = dict(payload.pop("extra_cli", None) or {})
     for key, value in overrides.items():
+        if key == "extra_cli":
+            continue
         if value is not None and value != "":
             payload[key] = value
+    merged_extra = dict(recipe_extra)
+    override_extra = overrides.get("extra_cli")
+    if override_extra:
+        merged_extra.update(override_extra)
+    if merged_extra:
+        payload["extra_cli"] = merged_extra
     return GenerateRequest.from_dict(payload)

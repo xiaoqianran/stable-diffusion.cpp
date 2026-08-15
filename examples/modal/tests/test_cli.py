@@ -74,6 +74,34 @@ def test_parse_generate_can_use_a_recipe_without_an_explicit_model():
     assert command.to_payload()["width"] == 512
 
 
+def test_parse_generate_accepts_the_five_new_recipes():
+    recipes = {
+        "sd2": "Manojb/stable-diffusion-2-1-base",
+        "sd-turbo": "stabilityai/sd-turbo",
+        "sdxl-turbo": "stabilityai/sdxl-turbo",
+        "ssd-1b": "segmind/SSD-1B",
+        "dreamlike-photoreal": "dreamlike-art/dreamlike-photoreal-2.0",
+    }
+    for name, marker in recipes.items():
+        command = parse_argv(["generate", "-p", "a test image", "--recipe", name])
+        payload = command.to_payload()
+        assert marker in payload["model"]
+        assert payload["width"] == 512
+        assert payload["steps"]
+
+
+def test_recipe_extra_cli_merges_with_user_flags():
+    from sdcpp_hooks.recipes import RECIPES, apply_recipe
+
+    RECIPES["sd2"]["extra_cli"] = {"--prediction": "v"}
+    try:
+        request = apply_recipe("sd2", prompt="a fox", extra_cli={"--type": "f16"})
+        assert request.extra_cli["--prediction"] == "v"
+        assert request.extra_cli["--type"] == "f16"
+    finally:
+        RECIPES["sd2"].pop("extra_cli", None)
+
+
 def test_parse_generate_forwards_sd_cli_artifact_and_extra_flags():
     command = parse_argv(
         [
@@ -95,6 +123,18 @@ def test_parse_generate_forwards_sd_cli_artifact_and_extra_flags():
     assert payload["control_net"] == "hf://org/repo/control.safetensors"
     assert payload["extra_cli"]["--offload-to-cpu"] is True
     assert payload["extra_cli"]["--type"] == "f16"
+
+
+def test_parse_publish_and_generate_publish_flag():
+    publish = parse_argv(["publish", "cat.png", "--recipe", "flux", "-p", "a cat"])
+    assert publish.action == "publish"
+    assert publish.image == "cat.png"
+    assert publish.recipe == "flux"
+    assert publish.prompt == "a cat"
+
+    generate = parse_argv(["generate", "-p", "a cat", "--recipe", "sd15", "--publish"])
+    assert generate.publish is True
+    assert generate.model_id == ""
 
 
 def test_parse_put_collects_local_files():

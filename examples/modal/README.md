@@ -31,7 +31,8 @@ Do not put tokens in git.
 python3 sdcpp_modal.py pull --recipe sd15
 python3 sdcpp_modal.py ls
 python3 sdcpp_modal.py probe
-python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png
+python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png --publish
+python3 sdcpp_modal.py publish cat.png --recipe sd15 -p "a lovely cat"
 ```
 
 | Command | Where it runs | What it does |
@@ -41,6 +42,7 @@ python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png
 | `ls` | CPU | list files already on that volume |
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
 | `generate` | GPU (`SDCPP_GPU`, default `L4`) | run `sd-cli` and write a local PNG |
+| `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 
 `generate` downloads a missing URI onto the same volume before it runs `sd-cli`.
 
@@ -79,6 +81,31 @@ Then pass `--model /models/hf/local/v1-5-pruned-emaonly.safetensors`.
 | `SDCPP_GPU` | `L4` |
 | `SDCPP_SECRET` | `sdcpp-tokens` (used only if that Modal secret exists) |
 | `HF_ENDPOINT` | `https://huggingface.co` |
+| `SDCPP_GALLERY_DATASET` | `seachen/stable-diffusion-cpp-gallery` |
+| `SDCPP_GITHUB_REPO` | `xiaoqianran/stable-diffusion.cpp` |
+
+## Gallery dataset and Pages
+
+Generated images are stored on the public Hugging Face dataset
+[`seachen/stable-diffusion-cpp-gallery`](https://huggingface.co/datasets/seachen/stable-diffusion-cpp-gallery),
+one folder per model (`images/sd15`, `images/flux`, `images/wan`, ...). A new
+`--model-id` creates a new folder, so later models do not need a schema change.
+
+```bash
+python3 -m pip install 'huggingface_hub>=0.26'
+export HF_TOKEN=...
+python3 sdcpp_modal.py publish cat.png --model-id sd15 -p "a lovely cat" --seed 42
+```
+
+`generate --publish` writes the prompt plus run facts into the sidecar: duration,
+GPU name, CUDA version, torch version (or a note that sd-cli uses ggml), NVIDIA
+driver, sd-cli version, Python, Modal GPU type, and the container image. Pages
+cards show those fields under the prompt.
+
+GitHub Actions workflow `.github/workflows/gallery-pages.yml` downloads that
+dataset and deploys a paginated gallery to GitHub Pages (12 images per page,
+filters for current and future model families):
+https://xiaoqianran.github.io/stable-diffusion.cpp/
 
 ## Limits
 
