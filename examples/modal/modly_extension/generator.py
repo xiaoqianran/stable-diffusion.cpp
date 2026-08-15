@@ -47,23 +47,25 @@ def _prompt_from(params: dict[str, Any]) -> str:
     return ""
 
 
-def build_payload(params: dict[str, Any]) -> dict[str, Any]:
-    from sdcpp_hooks.recipes import apply_recipe
+_SD15_MODEL = (
+    "hf://stable-diffusion-v1-5/stable-diffusion-v1-5/v1-5-pruned-emaonly.safetensors"
+)
 
-    recipe = str(params.get("recipe") or "sd15")
-    request = apply_recipe(
-        recipe,
-        prompt=_prompt_from(params),
-        negative_prompt=params.get("negative_prompt") or None,
-        model=params.get("model") or None,
-        width=params.get("width") or None,
-        height=params.get("height") or None,
-        steps=params.get("steps") or None,
-        cfg_scale=params.get("cfg_scale") or None,
-        seed=params.get("seed") if params.get("seed") is not None else 42,
-    )
-    request.validate()
-    return request.to_dict()
+
+def build_payload(params: dict[str, Any]) -> dict[str, Any]:
+    prompt = _prompt_from(params)
+    if not prompt.strip():
+        raise ValueError("prompt is required")
+    return {
+        "prompt": prompt,
+        "negative_prompt": params.get("negative_prompt") or "",
+        "model": params.get("model") or _SD15_MODEL,
+        "width": int(params.get("width") or 512),
+        "height": int(params.get("height") or 512),
+        "steps": int(params.get("steps") or 20),
+        "cfg_scale": float(params.get("cfg_scale") or 7.0),
+        "seed": int(params["seed"]) if params.get("seed") is not None else 42,
+    }
 
 
 class SDCppGenerator(BaseGenerator):
