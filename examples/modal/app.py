@@ -31,7 +31,9 @@ volume = modal.Volume.from_name("sdcpp-models", create_if_missing=True)
 
 
 def _image() -> modal.Image:
-    image = modal.Image.from_registry(IMAGE_TAG, add_python="3.12")
+    image = modal.Image.from_registry(IMAGE_TAG, add_python="3.12").pip_install(
+        "fastapi[standard]>=0.115"
+    )
     if hasattr(image, "add_local_python_source"):
         return image.add_local_python_source("sdcpp_hooks")
     return image.add_local_dir(str(HERE / "sdcpp_hooks"), remote_path="/pkg/sdcpp_hooks").env(
