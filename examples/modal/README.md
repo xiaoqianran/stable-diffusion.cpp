@@ -1,48 +1,44 @@
-# sdcpp-hooks
+# sdcpp Modal CLI
 
-Decoupled image-generation hooks for [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp).
+Standalone CLI for this repo. It is not a plugin and is not wired into any other app.
 
-This package treats `sd-cli` as a black box. It never imports C++ headers, never
-binds the public C API, and never copies server JSON field names into the
-stable contract. Upstream can keep moving; this side keeps generating.
+It does two things:
 
-## Why this survives upstream updates
+1. **`pull`** — download checkpoints onto Modal Volume `sdcpp-models`
+2. **`generate`** — run remote `sd-cli` on a GPU and write a PNG locally
 
-1. **Stable contract.** Callers only send `GenerateRequest` (`prompt`, size,
-   seed, model URIs, plus an escape hatch).
-2. **Runtime discovery.** Each container start probes `sd-cli -h` and records
-   the flags that actually exist in that binary.
-3. **Alias table + drop, don't crash.** Common renames (`--steps` /
-   `--sample-steps`, `--cfg-scale` / `--txt-cfg`) are mapped automatically.
-   Unknown extra flags are dropped and reported instead of failing the run.
-4. **Pinned engine image.** Modal pulls
-   `ghcr.io/leejet/stable-diffusion.cpp:master-cuda` by default. Override with
-   `SDCPP_IMAGE` when you want a digest or your own build.
-5. **Model URIs, not repo paths.** Weights come from `hf://`, `civitai://`,
-   `https://`, or a local/volume path. Download and cache live on a Modal
-   Volume, outside the C++ tree.
+`sd-cli` is treated as a black box. Each GPU container probes `--help` and only uses flags that exist on that binary.
 
-```text
-caller  ->  GenerateRequest  ->  use_models()  ->  use_engine()  ->  adapt  ->  sd-cli
-                (stable)         hf/civitai         --help probe     drop
+## Setup
+
+```bash
+cd examples/modal
+python3 -m pip install 'modal>=0.64' pytest
+modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
+modal secret create sdcpp-tokens HF_TOKEN="$HF_TOKEN" CIVITAI_TOKEN="$CIVITAI_TOKEN"
 ```
 
-## Hooks
+Do not put tokens in git. Use env vars or the `sdcpp-tokens` secret.
 
-```python
-from sdcpp_hooks import GenerateRequest, use_sdcpp
+## CLI
 
-sd = use_sdcpp(probe=..., binary="/sd-cli", cache_dir=..., run=..., output_path=...)
-result = sd(GenerateRequest(prompt="a lovely cat", model="hf://org/repo/model.safetensors"))
+```bash
+python3 sdcpp_modal.py pull hf://stable-diffusion-v1-5/stable-diffusion-v1-5/v1-5-pruned-emaonly.safetensors
+python3 sdcpp_modal.py ls
+python3 sdcpp_modal.py probe
+python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png
 ```
 
-Or compose the pieces:
+| Command | Where it runs | What it does |
+| --- | --- | --- |
+| `pull` | CPU | download URIs onto volume `sdcpp-models` |
+| `ls` | CPU | list files already on that volume |
+| `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
+| `generate` | GPU (`SDCPP_GPU`, default `L4`) | run txt2img and write a local PNG |
 
-- `use_engine(probe=...)` — parse `--help`
-- `use_models(request, cache_dir=...)` — resolve URIs onto disk
-- `generate(request, engine=..., models=..., run=...)` — adapt + execute
+`generate` will download a missing URI onto the same volume before it runs `sd-cli`.
 
-## Model URIs
+### Model URIs
 
 | URI | Meaning |
 | --- | --- |
@@ -50,47 +46,10 @@ Or compose the pieces:
 | `hf://org/repo@rev/file.gguf` | Hugging Face file at `rev` |
 | `civitai://128713` | Civitai **model version** id |
 | `https://...` | Direct download |
-| `/models/foo.safetensors` | Already on the volume or local disk |
-
-Set `HF_TOKEN` and `CIVITAI_TOKEN` in the environment (or the Modal secret
-`sdcpp-tokens`). Do not put tokens in git. If a token was pasted into chat,
-rotate it.
 
 `HF_ENDPOINT` can point at a Hugging Face mirror.
 
-## Local tests
-
-The hook layer is stdlib-only. From this directory:
-
-```bash
-python3 -m pip install pytest
-python3 -m pytest
-```
-
-These tests do not download weights and do not need a GPU.
-
-## Modal
-
-```bash
-python3 -m pip install 'modal>=0.64'
-modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
-modal secret create sdcpp-tokens HF_TOKEN="$HF_TOKEN" CIVITAI_TOKEN="$CIVITAI_TOKEN"
-```
-
-Probe the remote `sd-cli` flags without downloading a checkpoint:
-
-```bash
-modal run app.py --probe-only
-```
-
-Generate with the default SD 1.5 recipe (first run downloads the checkpoint
-onto volume `sdcpp-models`):
-
-```bash
-modal run app.py --prompt "a lovely cat" --recipe sd15 --output /tmp/cat.png
-```
-
-Optional environment:
+### Environment
 
 | Variable | Default |
 | --- | --- |
@@ -98,21 +57,10 @@ Optional environment:
 | `SDCPP_GPU` | `L4` |
 | `HF_ENDPOINT` | `https://huggingface.co` |
 
-`POST` the same `GenerateRequest` JSON to the `api_generate` endpoint after
-`modal deploy app.py`.
+## Tests
 
-## Modly hook
+```bash
+python3 -m pytest
+```
 
-`modly_extension/` is a Modly `manifest.json` + `generator.py` adapter. It does
-not vendor `sd-cli`. It calls the deployed `sdcpp-hooks` Modal class, so the
-Modly backend can keep its existing extension loader while sd.cpp flag churn
-stays isolated behind `--help` discovery.
-
-Copy that folder onto volume `modly-extensions` as `sdcpp/` after
-`modal deploy app.py`.
-
-## What this package will not do
-
-- Track every new sampler, DiT family, or server route in `examples/server`
-- Rebuild `stable-diffusion.cpp` from this repository on each request
-- Store tokens, weights, or generated images in git
+These tests do not download weights and do not need a GPU.

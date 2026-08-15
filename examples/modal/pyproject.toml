@@ -1,7 +1,7 @@
 [project]
-name = "sdcpp-hooks"
+name = "sdcpp-modal-cli"
 version = "0.1.0"
-description = "Decoupled Modal hooks for stable-diffusion.cpp image generation"
+description = "Standalone Modal CLI for stable-diffusion.cpp image generation"
 requires-python = ">=3.10"
 readme = "README.md"
 

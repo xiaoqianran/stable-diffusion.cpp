@@ -9,7 +9,7 @@ from .discover import EngineCapabilities, Flag
 
 # Stable field -> candidate CLI names. First match in the probed --help wins.
 # Keep historical and likely future names here so upstream renames do not
-# require a hooks change.
+# require an adapter change.
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "prompt": ("--prompt", "-p"),
     "negative_prompt": ("--negative-prompt", "-n"),

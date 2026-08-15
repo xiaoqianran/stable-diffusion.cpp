@@ -150,10 +150,26 @@ def resolve_artifacts(
             continue
 
         url = ref.download_url(hf_endpoint=endpoint)
-        headers = {"User-Agent": "sdcpp-hooks/0.1"}
+        headers = {"User-Agent": "sdcpp-modal-cli/0.1"}
         token = token_for_url(url)
         if token:
             headers["Authorization"] = f"Bearer {token}"
         resolved[key] = fetch(url, dest, headers)
 
     return resolved
+
+
+def list_cached_artifacts(cache_dir: Path) -> list[dict[str, int | str]]:
+    root = Path(cache_dir)
+    if not root.exists():
+        return []
+    listed: list[dict[str, int | str]] = []
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            listed.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "bytes": path.stat().st_size,
+                }
+            )
+    return listed

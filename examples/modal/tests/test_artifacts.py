@@ -96,3 +96,19 @@ def test_resolve_artifacts_builds_hf_and_civitai_urls(tmp_path):
     assert civitai_headers["Authorization"] == "Bearer civitai"
     assert resolved["model"].name == "weights.gguf"
     assert resolved["lora"].parent.name == "128713"
+
+
+def test_resolve_artifacts_can_pull_arbitrary_uri_keys(tmp_path):
+    def fetch(url, dest, headers):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"weights")
+        return dest
+
+    resolved = resolve_artifacts(
+        {"uri_0": "hf://org/repo/a.safetensors"},
+        cache_dir=tmp_path,
+        fetch=fetch,
+        artifact_fields={"uri_0"},
+    )
+
+    assert resolved["uri_0"].read_bytes() == b"weights"
