@@ -17,9 +17,8 @@ RECIPES: dict[str, dict[str, Any]] = {
         "model": "hf://Manojb/stable-diffusion-2-1-base/v2-1_512-ema-pruned.safetensors",
         "width": 512,
         "height": 512,
-        "steps": 8,
+        "steps": 20,
         "cfg_scale": 7.0,
-        "extra_cli": {"--prediction": "v"},
     },
     "sd-turbo": {
         "model": "hf://stabilityai/sd-turbo/sd_turbo.safetensors",

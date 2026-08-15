@@ -90,13 +90,16 @@ def test_parse_generate_accepts_the_five_new_recipes():
         assert payload["steps"]
 
 
-def test_sd2_recipe_keeps_v_prediction_when_extra_flags_are_added():
-    command = parse_argv(
-        ["generate", "-p", "a fox", "--recipe", "sd2", "--type", "f16"]
-    )
-    payload = command.to_payload()
-    assert payload["extra_cli"]["--prediction"] == "v"
-    assert payload["extra_cli"]["--type"] == "f16"
+def test_recipe_extra_cli_merges_with_user_flags():
+    from sdcpp_hooks.recipes import RECIPES, apply_recipe
+
+    RECIPES["sd2"]["extra_cli"] = {"--prediction": "v"}
+    try:
+        request = apply_recipe("sd2", prompt="a fox", extra_cli={"--type": "f16"})
+        assert request.extra_cli["--prediction"] == "v"
+        assert request.extra_cli["--type"] == "f16"
+    finally:
+        RECIPES["sd2"].pop("extra_cli", None)
 
 
 def test_parse_generate_forwards_sd_cli_artifact_and_extra_flags():
