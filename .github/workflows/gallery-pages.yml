@@ -1,0 +1,63 @@
+name: Gallery Pages
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [gallery-rebuild]
+  schedule:
+    - cron: "20 */6 * * *"
+  push:
+    branches: [master]
+    paths:
+      - "examples/modal/gallery/**"
+      - "examples/modal/sdcpp_hooks/gallery.py"
+      - ".github/workflows/gallery-pages.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: gallery-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install builder
+        run: python3 -m pip install 'huggingface_hub>=0.26'
+
+      - name: Build paginated site
+        env:
+          SDCPP_GALLERY_DATASET: seachen/stable-diffusion-cpp-gallery
+        run: |
+          python3 examples/modal/gallery/build.py \
+            --repo "$SDCPP_GALLERY_DATASET" \
+            --out _site \
+            --per-page 12
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

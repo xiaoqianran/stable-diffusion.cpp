@@ -7,6 +7,7 @@ readme = "README.md"
 
 [project.optional-dependencies]
 modal = ["modal>=0.64"]
+gallery = ["huggingface_hub>=0.26"]
 dev = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]

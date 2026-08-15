@@ -97,6 +97,18 @@ def test_parse_generate_forwards_sd_cli_artifact_and_extra_flags():
     assert payload["extra_cli"]["--type"] == "f16"
 
 
+def test_parse_publish_and_generate_publish_flag():
+    publish = parse_argv(["publish", "cat.png", "--recipe", "flux", "-p", "a cat"])
+    assert publish.action == "publish"
+    assert publish.image == "cat.png"
+    assert publish.recipe == "flux"
+    assert publish.prompt == "a cat"
+
+    generate = parse_argv(["generate", "-p", "a cat", "--recipe", "sd15", "--publish"])
+    assert generate.publish is True
+    assert generate.model_id == ""
+
+
 def test_parse_put_collects_local_files():
     command = parse_argv(["put", "cat.png", "mask.png"])
 

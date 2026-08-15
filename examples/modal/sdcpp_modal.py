@@ -10,6 +10,7 @@ from pathlib import Path
 from app import SDEngine, gpu_app, list_storage, probe, pull, put_files, storage_app
 from sdcpp_hooks.cli import parse_argv
 from sdcpp_hooks.contract import ValidationError
+from sdcpp_hooks.hf_dataset import publish_image, trigger_pages_rebuild
 
 
 MAX_PUT_BYTES = 64 * 1024 * 1024
@@ -62,6 +63,9 @@ def main(argv: list[str] | None = None) -> int:
             _print_storage(list_storage.remote())
             return 0
 
+    if command.action == "publish":
+        return _publish(command)
+
     if command.action == "probe":
         with gpu_app.run():
             caps = probe.remote()
@@ -85,7 +89,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {dest} via {result['engine_id']}")
         if result["dropped_fields"]:
             print("dropped_fields:", ", ".join(result["dropped_fields"]))
+        if command.publish:
+            return _publish(command, image_path=dest)
         return 0
+
+
+def _publish(command, image_path: Path | None = None) -> int:
+    path = Path(image_path or command.image)
+    record = publish_image(
+        path,
+        model=command.model_id or command.recipe or "other",
+        prompt=command.prompt,
+        negative_prompt=command.negative_prompt,
+        seed=command.seed,
+        steps=command.steps or None,
+        width=command.width or None,
+        height=command.height or None,
+        cfg_scale=command.cfg_scale or None,
+    )
+    print(f"published {record.path} as {record.model}/{record.id}")
+    if trigger_pages_rebuild():
+        print("triggered gallery Pages rebuild")
+    return 0
 
 
 if __name__ == "__main__":

@@ -57,6 +57,9 @@ class CliCommand:
     strength: float | None = None
     batch_count: int = 0
     extra_cli: dict[str, Any] = field(default_factory=dict)
+    publish: bool = False
+    model_id: str = ""
+    image: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         request = apply_recipe(
@@ -137,6 +140,20 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
     generate.add_argument("--scheduler", default="")
     generate.add_argument("--strength", type=float, default=None)
     generate.add_argument("-b", "--batch-count", dest="batch_count", type=int, default=0)
+    generate.add_argument("--publish", action="store_true", help="upload the PNG to the HF gallery dataset")
+    generate.add_argument("--model-id", default="", help="gallery model folder (default: recipe)")
+
+    publish = sub.add_parser("publish", help="upload a local PNG to the HF gallery dataset")
+    publish.add_argument("image", help="local PNG path")
+    publish.add_argument("-p", "--prompt", default="")
+    publish.add_argument("-n", "--negative-prompt", default="")
+    publish.add_argument("--recipe", default="sd15")
+    publish.add_argument("--model-id", default="", help="gallery model folder (default: recipe)")
+    publish.add_argument("--seed", type=int, default=42)
+    publish.add_argument("--steps", type=int, default=0)
+    publish.add_argument("-W", "--width", type=int, default=0)
+    publish.add_argument("-H", "--height", type=int, default=0)
+    publish.add_argument("--cfg-scale", type=float, default=0.0)
 
     args, unknown = parser.parse_known_args(list(argv))
     if unknown and args.action != "generate":
@@ -185,4 +202,7 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         strength=getattr(args, "strength", None),
         batch_count=int(getattr(args, "batch_count", 0) or 0),
         extra_cli=parse_extra_cli(unknown) if args.action == "generate" else {},
+        publish=bool(getattr(args, "publish", False)),
+        model_id=getattr(args, "model_id", "") or "",
+        image=getattr(args, "image", "") or "",
     )
