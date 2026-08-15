@@ -60,6 +60,7 @@ class CliCommand:
     publish: bool = False
     model_id: str = ""
     image: str = ""
+    official: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         request = apply_recipe(
@@ -155,6 +156,13 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
     publish.add_argument("-H", "--height", type=int, default=0)
     publish.add_argument("--cfg-scale", type=float, default=0.0)
 
+    cost = sub.add_parser("cost", help="show local Modal cost ledger (and optional official workspace summary)")
+    cost.add_argument(
+        "--official",
+        action="store_true",
+        help="also print modal.Workspace.billing.summary for this month",
+    )
+
     args, unknown = parser.parse_known_args(list(argv))
     if unknown and args.action != "generate":
         parser.error("unrecognized arguments: " + " ".join(unknown))
@@ -205,4 +213,5 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         publish=bool(getattr(args, "publish", False)),
         model_id=getattr(args, "model_id", "") or "",
         image=getattr(args, "image", "") or "",
+        official=bool(getattr(args, "official", False)),
     )

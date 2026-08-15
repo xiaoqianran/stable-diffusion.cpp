@@ -21,6 +21,7 @@ from sdcpp_hooks.cli import parse_argv
 from sdcpp_hooks.contract import ValidationError
 from sdcpp_hooks.hardware import format_host_summary
 from sdcpp_hooks.hf_dataset import publish_image, trigger_pages_rebuild
+from sdcpp_hooks.modal_meter import billed_app, billed_remote, cost_command, print_last_cost
 
 
 MAX_PUT_BYTES = 64 * 1024 * 1024
@@ -55,33 +56,39 @@ def _put_payload(paths: list[str]) -> list[dict]:
 
 def main(argv: list[str] | None = None) -> int:
     command = parse_argv(sys.argv[1:] if argv is None else argv)
+    if command.action == "cost":
+        return cost_command(official=command.official)
+
     if command.action in {"pull", "ls", "put"}:
-        with storage_app.run():
+        with billed_app(storage_app, "storage"):
             if command.action == "pull":
-                for row in pull.remote(command.uris):
+                for row in billed_remote(pull, command.uris, name="pull"):
                     print(f"{row['uri']} -> {row['path']} ({row['bytes']} bytes)")
-                return 0
-            if command.action == "put":
+            elif command.action == "put":
                 try:
                     files = _put_payload(command.files)
                 except (OSError, ValueError) as exc:
                     print(exc, file=sys.stderr)
                     return 2
-                for row in put_files.remote(files):
+                for row in billed_remote(put_files, files, name="put"):
                     print(f"{row['path']} ({row['bytes']} bytes)")
-                return 0
-            _print_storage(list_storage.remote())
-            return 0
+            else:
+                _print_storage(billed_remote(list_storage, name="ls"))
+            print_last_cost()
+        print_last_cost()
+        return 0
 
     if command.action == "publish":
         return _publish(command)
 
     if command.action == "probe":
-        with gpu_app.run():
-            caps = probe.remote()
+        with billed_app(gpu_app, "probe"):
+            caps = billed_remote(probe, name="probe")
             print(caps["binary"])
             print(" ".join(caps["flags"]))
-            return 0
+            print_last_cost()
+        print_last_cost()
+        return 0
 
     try:
         payload = command.to_payload()
@@ -89,26 +96,30 @@ def main(argv: list[str] | None = None) -> int:
         print(exc, file=sys.stderr)
         return 2
 
-    with storage_app.run():
-        for row in ensure_artifacts.remote(payload):
+    with billed_app(storage_app, "storage"):
+        for row in billed_remote(ensure_artifacts, payload, name="ensure_artifacts"):
             print(f"cpu storage {row['uri']} -> {row['path']} ({row['bytes']} bytes)")
+        print_last_cost()
+    print_last_cost()
 
-    with gpu_app.run():
-        result = SDEngine().generate.remote(payload)
-        if not result["images"]:
-            print(f"no images returned; dropped={result['dropped_fields']}", file=sys.stderr)
-            return 1
-        dest = Path(command.output)
-        dest.write_bytes(base64.b64decode(result["images"][0]))
-        print(f"wrote {dest} via {result['engine_id']}")
-        summary = format_host_summary(result.get("host"), result.get("duration_ms"))
-        if summary:
-            print(summary)
-        if result["dropped_fields"]:
-            print("dropped_fields:", ", ".join(result["dropped_fields"]))
-        if command.publish:
-            return _publish(command, image_path=dest, payload=result)
-        return 0
+    with billed_app(gpu_app, "gpu"):
+        result = billed_remote(SDEngine().generate, payload, name="generate", gpu=True)
+        print_last_cost()
+    print_last_cost()
+    if not result["images"]:
+        print(f"no images returned; dropped={result['dropped_fields']}", file=sys.stderr)
+        return 1
+    dest = Path(command.output)
+    dest.write_bytes(base64.b64decode(result["images"][0]))
+    print(f"wrote {dest} via {result['engine_id']}")
+    summary = format_host_summary(result.get("host"), result.get("duration_ms"))
+    if summary:
+        print(summary)
+    if result["dropped_fields"]:
+        print("dropped_fields:", ", ".join(result["dropped_fields"]))
+    if command.publish:
+        return _publish(command, image_path=dest, payload=result)
+    return 0
 
 
 def _resolved_generate_fields(command) -> dict:
@@ -143,6 +154,7 @@ def _publish(command, image_path: Path | None = None, payload: dict | None = Non
         "gpu_memory_mib": host.get("gpu_memory_mib"),
         "torch_cuda": host.get("torch_cuda"),
         "runtime": host.get("runtime"),
+        "cost": payload.get("cost"),
     }
     extra.update({key: value for key, value in host.items() if extra.get(key) in (None, "")})
     extra = {key: value for key, value in extra.items() if value not in (None, "")}

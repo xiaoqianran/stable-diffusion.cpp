@@ -34,6 +34,7 @@ def test_parse_pull_collects_one_or_more_uris():
 def test_parse_ls_and_probe_have_no_uris():
     assert parse_argv(["ls"]).action == "ls"
     assert parse_argv(["probe"]).action == "probe"
+    assert parse_argv(["cost"]).action == "cost"
 
 
 def test_parse_generate_requires_a_prompt():
