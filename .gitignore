@@ -11,6 +11,7 @@ test/
 *.gguf
 output*.png
 models*
+!examples/modal/gallery/models.json
 *.log
 preview.png
 .claude/
