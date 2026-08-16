@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import modal
@@ -23,6 +24,7 @@ from sdcpp_hooks.hardware import collect_run_environment
 from sdcpp_hooks.hooks import generate, use_engine, use_models
 from sdcpp_hooks.meter import ContainerMeter
 from sdcpp_hooks.probe import probe_cli_help
+from sdcpp_hooks.recipes import convert_jobs
 from sdcpp_hooks.runner import EngineError, run_cli
 
 
@@ -95,6 +97,15 @@ def _cuda_image() -> modal.Image:
     )
 
 
+def _convert_image() -> modal.Image:
+    script = HERE.parent.parent / "scripts" / "convert_fp8_scale_to_bf16.py"
+    return _with_hooks(
+        modal.Image.debian_slim(python_version="3.12")
+        .pip_install("safetensors", "torch")
+        .add_local_file(str(script), remote_path="/opt/convert_fp8_scale_to_bf16.py")
+    )
+
+
 def _secrets() -> list[modal.Secret]:
     local = {
         key: os.environ[key]
@@ -149,6 +160,7 @@ def _pull_uris(uris: list[str]) -> list[dict]:
 
 _APP_TAGS = {"project": "sdcpp-modal"}
 storage_app = modal.App("sdcpp-storage", image=_cpu_image(), tags={**_APP_TAGS, "role": "storage"})
+convert_app = modal.App("sdcpp-convert", image=_convert_image(), tags={**_APP_TAGS, "role": "convert"})
 gpu_app = modal.App("sdcpp-cli", image=_cuda_image(), tags={**_APP_TAGS, "role": "gpu"})
 
 
@@ -212,6 +224,71 @@ def put_files(files: list[dict]) -> list[dict]:
         )
     volume.commit()
     return rows
+
+
+@convert_app.function(
+    timeout=2 * 60 * 60,
+    memory=32768,
+    volumes={str(MODEL_ROOT): volume},
+    **_idle_kwargs(),
+)
+def convert_fp8_to_bf16(src: str, dest: str) -> dict:
+    volume.reload()
+    source = Path(src)
+    output = Path(dest)
+    if not source.exists() or source.stat().st_size <= 0:
+        raise FileNotFoundError(f"missing fp8 weights {src}; pull --recipe ideogram4 first")
+    if output.exists() and output.stat().st_size > 0:
+        return {"path": dest, "bytes": output.stat().st_size, "skipped": True}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "/opt/convert_fp8_scale_to_bf16.py",
+            "--input",
+            src,
+            "--output",
+            dest,
+            "--overwrite",
+        ],
+        check=False,
+    )
+    if completed.returncode != 0 or not output.exists():
+        raise RuntimeError(f"fp8 to bf16 failed for {src}")
+    volume.commit()
+    return {"path": dest, "bytes": output.stat().st_size, "skipped": False}
+
+
+@gpu_app.function(
+    gpu=GPU,
+    timeout=2 * 60 * 60,
+    volumes={str(MODEL_ROOT): volume},
+    **_idle_kwargs(),
+)
+def convert_to_gguf(src: str, dest: str, rules: str) -> dict:
+    volume.reload()
+    source = Path(src)
+    output = Path(dest)
+    if not source.exists() or source.stat().st_size <= 0:
+        raise FileNotFoundError(f"missing bf16 weights {src}")
+    if output.exists() and output.stat().st_size > 0:
+        return {"path": dest, "bytes": output.stat().st_size, "skipped": True}
+    help_text, binary = probe_cli_help()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    argv = [binary, "-M", "convert", "-m", src, "-o", dest, "--tensor-type-rules", rules, "-v"]
+    completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if completed.stdout:
+        print(completed.stdout, flush=True)
+    if completed.stderr:
+        print(completed.stderr, flush=True)
+    if completed.returncode != 0 or not output.exists():
+        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "sd-cli convert failed")
+    volume.commit()
+    return {"path": dest, "bytes": output.stat().st_size, "skipped": False}
+
+
+def ideogram4_convert_plan(quant: str = "q8_0") -> list[dict[str, str]]:
+    return convert_jobs("ideogram4", MODEL_ROOT, quant=quant)
 
 
 @gpu_app.function(**_idle_kwargs())

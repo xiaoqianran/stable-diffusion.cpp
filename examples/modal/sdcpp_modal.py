@@ -10,8 +10,12 @@ from pathlib import Path
 from app import (
     GPU,
     SDEngine,
+    convert_app,
+    convert_fp8_to_bf16,
+    convert_to_gguf,
     ensure_artifacts,
     gpu_app,
+    ideogram4_convert_plan,
     list_storage,
     probe,
     pull,
@@ -79,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
         print_last_cost()
         return 0
 
+    if command.action == "convert":
+        return _convert(command)
+
     if command.action == "publish":
         return _publish(command)
 
@@ -121,6 +128,35 @@ def main(argv: list[str] | None = None) -> int:
         print("dropped_fields:", ", ".join(result["dropped_fields"]))
     if command.publish:
         return _publish(command, image_path=dest, payload=result)
+    return 0
+
+
+def _convert(command) -> int:
+    try:
+        jobs = ideogram4_convert_plan(command.quant)
+    except KeyError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    print(f"gpu {GPU}")
+    with billed_app(convert_app, "convert"):
+        for job in jobs:
+            row = billed_remote(convert_fp8_to_bf16, job["src"], job["bf16"], name="convert_fp8")
+            print(f"bf16 {row['path']} ({row['bytes']} bytes)")
+        print_last_cost()
+    print_last_cost()
+    with billed_app(gpu_app, "gpu"):
+        for job in jobs:
+            row = billed_remote(
+                convert_to_gguf,
+                job["bf16"],
+                job["gguf"],
+                job["rules"],
+                name="convert_gguf",
+                gpu=True,
+            )
+            print(f"gguf {row['path']} ({row['bytes']} bytes)")
+        print_last_cost()
+    print_last_cost()
     return 0
 
 

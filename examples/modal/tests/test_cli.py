@@ -89,6 +89,24 @@ def test_parse_generate_accepts_ideogram4_recipe():
     assert payload["extra_cli"]["--offload-to-cpu"] is True
 
 
+def test_parse_convert_ideogram4_defaults_to_q8():
+    command = parse_argv(["convert", "--recipe", "ideogram4"])
+
+    assert command.action == "convert"
+    assert command.recipe == "ideogram4"
+    assert command.quant == "q8_0"
+
+
+def test_ideogram4_convert_jobs_keep_cond_and_uncond_apart(tmp_path):
+    from sdcpp_hooks.recipes import convert_jobs
+
+    jobs = convert_jobs("ideogram4", tmp_path, quant="q8_0")
+    assert len(jobs) == 2
+    assert jobs[0]["gguf"].endswith("ideogram4-Q8_0.gguf")
+    assert jobs[1]["gguf"].endswith("ideogram4_uncond-Q8_0.gguf")
+    assert jobs[0]["src"] != jobs[1]["src"]
+
+
 def test_parse_pull_recipe_includes_ideogram4_uncond():
     command = parse_argv(["pull", "--recipe", "ideogram4"])
 

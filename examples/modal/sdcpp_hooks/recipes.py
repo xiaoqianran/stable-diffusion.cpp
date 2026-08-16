@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from .artifacts import ArtifactRef
 from .contract import GenerateRequest
+
+
+IDEOGRAM4_CONVERT_RULES = (
+    "^layers.*adaln_modulation.*weight={quant},"
+    "layers.*attention.o.*weight={quant},"
+    "layers.*attention.qkv.*weight={quant},"
+    "layers.*feed_forward.*weight={quant}"
+)
 
 
 RECIPES: dict[str, dict[str, Any]] = {
@@ -111,3 +121,25 @@ def apply_recipe(name: str, **overrides: Any) -> GenerateRequest:
     if merged_extra:
         payload["extra_cli"] = merged_extra
     return GenerateRequest.from_dict(payload)
+
+
+def convert_jobs(name: str, cache_dir: Path, quant: str = "q8_0") -> list[dict[str, str]]:
+    if name != "ideogram4":
+        raise KeyError(f"convert is only wired for ideogram4, not {name!r}")
+    recipe = RECIPES[name]
+    jobs: list[dict[str, str]] = []
+    for key, stem in (
+        ("diffusion_model", "ideogram4"),
+        ("uncond_diffusion_model", "ideogram4_uncond"),
+    ):
+        src = ArtifactRef.parse(str(recipe[key])).cache_path(Path(cache_dir))
+        jobs.append(
+            {
+                "src": str(src),
+                "bf16": str(src.with_name(f"{stem}-bf16.safetensors")),
+                "gguf": str(src.with_name(f"{stem}-{quant.upper()}.gguf")),
+                "quant": quant,
+                "rules": IDEOGRAM4_CONVERT_RULES.format(quant=quant),
+            }
+        )
+    return jobs

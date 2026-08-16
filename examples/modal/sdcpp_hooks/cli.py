@@ -62,6 +62,7 @@ class CliCommand:
     model_id: str = ""
     image: str = ""
     official: bool = False
+    quant: str = "q8_0"
 
     def to_payload(self) -> dict[str, Any]:
         request = apply_recipe(
@@ -164,6 +165,10 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
     publish.add_argument("-H", "--height", type=int, default=0)
     publish.add_argument("--cfg-scale", type=float, default=0.0)
 
+    convert = sub.add_parser("convert", help="convert Ideogram4 fp8 weights to GGUF on Modal")
+    convert.add_argument("--recipe", default="ideogram4", help="recipe to convert (only ideogram4)")
+    convert.add_argument("--quant", default="q8_0", help="gguf quant (default: q8_0)")
+
     cost = sub.add_parser("cost", help="show local Modal cost ledger (and optional official workspace summary)")
     cost.add_argument(
         "--official",
@@ -223,4 +228,5 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         model_id=getattr(args, "model_id", "") or "",
         image=getattr(args, "image", "") or "",
         official=bool(getattr(args, "official", False)),
+        quant=getattr(args, "quant", "q8_0") or "q8_0",
     )

@@ -33,6 +33,7 @@ python3 sdcpp_modal.py ls
 python3 sdcpp_modal.py probe
 python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png --publish
 python3 sdcpp_modal.py publish cat.png --recipe sd15 -p "a lovely cat"
+python3 sdcpp_modal.py convert --recipe ideogram4
 python3 sdcpp_modal.py cost
 python3 sdcpp_modal.py cost --official
 ```
@@ -43,6 +44,7 @@ python3 sdcpp_modal.py cost --official
 | `put` | CPU | upload a small local file (init image, mask) to `uploads/` |
 | `ls` | CPU | list files already on that volume |
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
+| `convert` | CPU torch, then GPU `sd-cli -M convert` | Ideogram4 fp8-scale → bf16 → GGUF |
 | `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 | `cost` | local (+ optional Modal API) | print the local billed-session ledger |
@@ -128,7 +130,7 @@ Ideogram4 fp8 weights expand to F16 on GPU. The default `L40S` has enough VRAM. 
 
 ## Limits
 
-- First-class path is `img_gen`. `vid_gen`, `adetailer`, `convert`, and `metadata` are not wrapped; some of their flags can still be forwarded if the remote binary accepts them.
+- First-class path is `img_gen`. Ideogram4 `convert` is wrapped. `vid_gen`, `adetailer`, and `metadata` are not; some of their flags can still be forwarded if the remote binary accepts them.
 - `put` is for small files (64 MiB). Weights should use `pull` or `modal volume put`.
 - Size defaults match local `sd-cli` (512x512, 20 steps, cfg 7.0) unless you override them or use a recipe.
 
