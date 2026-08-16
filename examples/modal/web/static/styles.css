@@ -1,5 +1,5 @@
 :root {
-  color-scheme: dark light;
+  color-scheme: dark;
   --bg: #0b0b0a;
   --bg-2: #121110;
   --bg-3: #1a1916;
@@ -17,24 +17,6 @@
   --mono: "IBM Plex Mono", ui-monospace, monospace;
   --radius: 0.55rem;
   --max: 68rem;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f4f0e6;
-    --bg-2: #fffdf8;
-    --bg-3: #ece6d8;
-    --line: rgba(28, 24, 16, 0.1);
-    --line-strong: rgba(28, 24, 16, 0.18);
-    --text: #1b1814;
-    --muted: #6d675c;
-    --faint: #9a9488;
-    --accent: #8a6a28;
-    --accent-ink: #fff8e8;
-    --ok: #4d7a3a;
-    --bad: #b14338;
-    --shadow: 0 16px 36px rgba(40, 32, 16, 0.08);
-  }
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -232,9 +214,10 @@ fieldset {
 
 .choice-list {
   display: grid;
+  max-height: 22rem;
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 0.7rem;
-  overflow: hidden;
 }
 
 .choice {
@@ -242,7 +225,7 @@ fieldset {
   grid-template-columns: 1.1rem minmax(0, 1fr) auto auto;
   gap: 0.7rem;
   align-items: center;
-  padding: 0.72rem 0.85rem;
+  padding: 0.58rem 0.8rem;
   border-bottom: 1px solid var(--line);
   background: transparent;
 }
@@ -330,10 +313,11 @@ select:focus {
   flex-wrap: wrap;
   gap: 0.7rem;
   align-items: end;
+  margin: 0.15rem 0 1.05rem;
 }
 
-.composer .field { flex: 1 1 9rem; }
-.composer .grow { flex: 2 1 12rem; }
+.composer .field { flex: 1 1 8.5rem; }
+.composer button { width: 100%; }
 
 .actions {
   display: flex;

@@ -117,16 +117,24 @@ function recipeFieldset(meta, selected, prefix) {
     </fieldset>`;
 }
 
-function settingsFields(prefix, defaults, meta) {
+function composerFields(prefix, defaults, meta, submitLabel) {
   return `
-    ${recipeFieldset(meta, defaults.recipe, prefix)}
     <div class="composer">
       ${select(`${prefix}-gpu`, "gpu", "显卡", (meta.gpus || []).map((gpu) => ({
         id: gpu.id,
         name: gpuOptionLabel(gpu),
       })), defaults.gpu)}
       ${field(`${prefix}-count`, "count", "张数", defaults.count, "number")}
-    </div>
+      <div class="field">
+        <label class="field-label" for="${prefix}-go">出图</label>
+        <button id="${prefix}-go" type="submit">${submitLabel}</button>
+      </div>
+    </div>`;
+}
+
+function settingsFields(prefix, defaults, meta) {
+  return `
+    ${recipeFieldset(meta, defaults.recipe, prefix)}
     <details class="advanced">
       <summary>尺寸与采样</summary>
       <div class="grid">
@@ -233,11 +241,9 @@ function generatePage(meta) {
           <label class="field-label" for="gen-prompt">提示词</label>
           <textarea id="gen-prompt" name="prompt" required placeholder="雨夜城市，电影感摄影"></textarea>
         </div>
+        ${composerFields("gen", defaults, meta, "开始生成")}
+        <span class="mono" id="job-id"></span>
         ${settingsFields("gen", defaults, meta)}
-        <div class="actions">
-          <button type="submit">开始生成</button>
-          <span class="mono" id="job-id"></span>
-        </div>
       </form>
       <aside class="panel" aria-label="这次请求">
         <p class="run-kicker">这次请求</p>
@@ -305,12 +311,10 @@ function batchPage(meta) {
         <label class="field-label" for="batch-text">或直接粘贴</label>
         <textarea id="batch-text" name="text" placeholder="一座美丽的森林&#10;一座未来都市"></textarea>
       </div>
+      ${composerFields("batch", defaults, meta, "开始批量")}
+      <span class="mono" id="job-id"></span>
       ${settingsFields("batch", defaults, meta)}
       <p class="hint" id="recipe-hint"></p>
-      <div class="actions">
-        <button type="submit">开始批量</button>
-        <span class="mono" id="job-id"></span>
-      </div>
       ${progressBox()}
     </form>
   `;
