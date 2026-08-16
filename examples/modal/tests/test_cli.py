@@ -3,6 +3,34 @@ import pytest
 from sdcpp_hooks.cli import parse_argv
 
 
+def test_parse_prefetch_defaults_to_z_image_turbo():
+    command = parse_argv(["prefetch"])
+
+    assert command.action == "prefetch"
+    assert command.recipe == "z-image-turbo"
+    assert any("z_image_turbo-Q3_K.gguf" in uri for uri in command.uris)
+    assert any("FLUX.1-schnell" in uri for uri in command.uris)
+
+
+def test_parse_prefetch_recipe_and_all():
+    one = parse_argv(["prefetch", "ideogram4"])
+    assert one.action == "prefetch"
+    assert any("ideogram4-Q4_0.gguf" in uri for uri in one.uris)
+    assert len(one.uris) == 4
+
+    everything = parse_argv(["prefetch", "--all"])
+    assert any("flux2-dev-Q4_K_S.gguf" in uri for uri in everything.uris)
+    assert sum("FLUX.2-dev/ae.safetensors" in uri for uri in everything.uris) == 1
+
+
+def test_parse_prefetch_status_needs_no_uris():
+    command = parse_argv(["prefetch", "--status"])
+
+    assert command.action == "prefetch"
+    assert command.status is True
+    assert command.uris == []
+
+
 def test_parse_pull_requires_uris_or_recipe():
     with pytest.raises(SystemExit):
         parse_argv(["pull"])
@@ -204,6 +232,17 @@ def test_parse_web_defaults_to_local_workbench():
     assert command.open_browser is False
     assert command.port == 7870
     assert command.host == "127.0.0.1"
+
+
+def test_recipe_volume_status_uses_cache_relpaths():
+    from sdcpp_hooks.recipes import recipe_uris, recipe_volume_status, volume_relpath
+
+    sd15 = recipe_uris("sd15")[0]
+    rows = recipe_volume_status({volume_relpath(sd15)})
+    by_id = {item["recipe"]: item for item in rows}
+    assert by_id["sd15"]["complete"] is True
+    assert by_id["z-image-turbo"]["complete"] is False
+    assert by_id["z-image-turbo"]["missing"]
 
 
 def test_parse_put_collects_local_files():

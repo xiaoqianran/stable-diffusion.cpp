@@ -4,7 +4,7 @@ import argparse
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from .recipes import all_recipe_uris, apply_recipe, recipe_uris
+from .recipes import DEFAULT_RECIPE, all_recipe_uris, apply_recipe, prefetch_uris, recipe_uris
 
 
 def parse_extra_cli(argv: Sequence[str]) -> dict[str, Any]:
@@ -66,6 +66,7 @@ class CliCommand:
     port: int = 7860
     dry_run: bool = False
     open_browser: bool = True
+    status: bool = False
 
     def to_payload(self) -> dict[str, Any]:
         request = apply_recipe(
@@ -113,6 +114,24 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
     pull.add_argument("--recipe", default="", help="also pull files from a bundled recipe")
     pull.add_argument("--all", action="store_true", help="pull every bundled recipe")
     pull.add_argument("uris", nargs="*", help="hf://, civitai://, or https:// URI")
+
+    prefetch = sub.add_parser(
+        "prefetch",
+        help="CPU-download recipe weights onto Modal volume sdcpp-models",
+    )
+    prefetch.add_argument(
+        "recipe_name",
+        nargs="?",
+        default="",
+        help=f"recipe id; default {DEFAULT_RECIPE}",
+    )
+    prefetch.add_argument("--recipe", default="", help="same as the positional recipe id")
+    prefetch.add_argument("--all", action="store_true", help="prefetch every bundled recipe")
+    prefetch.add_argument(
+        "--status",
+        action="store_true",
+        help="list which recipe files are already on the volume",
+    )
 
     put = sub.add_parser("put", help="upload a local file onto volume sdcpp-models")
     put.add_argument("files", nargs="+", help="local file path (small files; use pull for weights)")
@@ -191,7 +210,7 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         parser.error("unrecognized arguments: " + " ".join(unknown))
 
     uris = list(getattr(args, "uris", []) or [])
-    recipe = getattr(args, "recipe", "") or ""
+    recipe = getattr(args, "recipe", "") or getattr(args, "recipe_name", "") or ""
     if args.action == "pull":
         if getattr(args, "all", False):
             uris = all_recipe_uris() + uris
@@ -202,6 +221,11 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
                 parser.error(str(exc))
         if not uris:
             parser.error("pull requires at least one URI, --recipe, or --all")
+    elif args.action == "prefetch" and not getattr(args, "status", False):
+        try:
+            uris = prefetch_uris(recipe=recipe, all_recipes=bool(getattr(args, "all", False)))
+        except KeyError as exc:
+            parser.error(str(exc))
 
     return CliCommand(
         action=args.action,
@@ -209,7 +233,7 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         files=list(getattr(args, "files", []) or []),
         prompt=getattr(args, "prompt", "") or "",
         negative_prompt=getattr(args, "negative_prompt", "") or "",
-        recipe=recipe or "sd15",
+        recipe=recipe or (DEFAULT_RECIPE if args.action == "prefetch" else "sd15"),
         model=getattr(args, "model", "") or "",
         diffusion_model=getattr(args, "diffusion_model", "") or "",
         uncond_diffusion_model=getattr(args, "uncond_diffusion_model", "") or "",
@@ -244,4 +268,5 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         port=int(getattr(args, "port", 7860) or 7860),
         dry_run=bool(getattr(args, "dry_run", False)),
         open_browser=not bool(getattr(args, "no_open", False)),
+        status=bool(getattr(args, "status", False)),
     )

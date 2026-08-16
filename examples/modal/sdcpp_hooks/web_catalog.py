@@ -4,7 +4,7 @@ from typing import Any
 
 from .cost import FALLBACK_RATES, GPU_ALIASES
 from .gpu import PRO6000, default_gpu_for_recipe, normalize_gpu
-from .recipes import RECIPES, recipe_uris
+from .recipes import DEFAULT_RECIPE, RECIPES, recipe_uris
 
 
 ALLOWED_GPUS = (
@@ -119,7 +119,7 @@ def list_models() -> list[dict[str, Any]]:
 
 
 def default_recipe() -> str:
-    return "z-image-turbo"
+    return DEFAULT_RECIPE
 
 
 __all__ = [

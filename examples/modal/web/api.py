@@ -135,13 +135,33 @@ def doctor() -> dict[str, Any]:
         checks.append({"name": "modal", "ok": True, "detail": "import ok"})
     except Exception as exc:
         checks.append({"name": "modal", "ok": False, "detail": str(exc)})
+    checks.append(_proxy_extra_check())
     try:
         from PIL import Image  # noqa: F401
 
         checks.append({"name": "pillow", "ok": True, "detail": "import ok"})
     except Exception as exc:
         checks.append({"name": "pillow", "ok": False, "detail": str(exc)})
-    return {"ready": all(item["ok"] for item in checks if item["name"] != "modal"), "checks": checks}
+    skip = {"modal", "api_proxy"}
+    return {"ready": all(item["ok"] for item in checks if item["name"] not in skip), "checks": checks}
+
+
+def _proxy_extra_check() -> dict[str, Any]:
+    try:
+        import aiohttp_socks  # noqa: F401
+        import python_socks  # noqa: F401
+    except ImportError:
+        return {
+            "name": "api_proxy",
+            "ok": False,
+            "detail": "missing; install modal[api-proxy-support]",
+        }
+    detail = "modal[api-proxy-support]"
+    if os.environ.get("MODAL_DISABLE_API_PROXY"):
+        detail += "; MODAL_DISABLE_API_PROXY=1"
+    elif any(os.environ.get(key) for key in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")):
+        detail += "; proxy env set"
+    return {"name": "api_proxy", "ok": True, "detail": detail}
 
 
 @router.post("/jobs")

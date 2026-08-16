@@ -3,9 +3,17 @@ from decimal import Decimal
 
 import pytest
 
+from pathlib import Path
+
 from sdcpp_hooks.gpu import PRO6000, default_gpu_for_recipe, normalize_gpu
 from sdcpp_hooks.web_catalog import default_recipe, list_models
 from sdcpp_hooks.web_jobs import JobService
+
+
+def test_pyproject_declares_modal_proxy_extra():
+    text = Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()
+    assert "modal[api-proxy-support]" in text
+    assert "package = false" in text
 
 
 def test_default_recipe_is_z_image_turbo():
@@ -157,3 +165,5 @@ def test_fastapi_create_job_dry_run(tmp_path):
     match = next(item for item in listed if item["id"] == job_id)
     assert Decimal(match["cost_usd"]) == 0
     assert match["cost_events"] >= 1
+    doctor = client.get("/api/doctor").json()
+    assert "api_proxy" in {item["name"] for item in doctor["checks"]}

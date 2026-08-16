@@ -1,5 +1,20 @@
 # Modal CLI
 
+```bash
+cd examples/modal
+uv sync
+uv run modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
+
+uv run python sdcpp_modal.py prefetch
+uv run python sdcpp_modal.py prefetch z-image-turbo
+uv run python sdcpp_modal.py prefetch --all
+uv run python sdcpp_modal.py prefetch --status
+uv run python sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turbo -o zimage.png
+uv run python sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
+uv run python sdcpp_modal.py web
+uv run python sdcpp_modal.py cost
+```
+
 Run the official `sd-cli` on [Modal](https://modal.com) when the local machine cannot host the model.
 
 This example does not change the C API, local CLI, or server. It treats `sd-cli` as a black box: each GPU container probes `--help` and only forwards flags that exist on that binary.
@@ -10,9 +25,18 @@ Weights live on Modal Volume `sdcpp-models`. The default image is `ghcr.io/leeje
 
 ```bash
 cd examples/modal
-python3 -m pip install 'modal>=0.64' pytest
-modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
+uv sync
+uv run modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
 ```
+
+`uv sync` installs `modal[api-proxy-support]` plus the local web extras into `.venv`. After that, either `uv run python sdcpp_modal.py …` or `source .venv/bin/activate`. Remote CPU/GPU images stay on the official `sd-cli` container; they do not run `uv sync`. HTTP CONNECT / SOCKS proxies use the usual env vars:
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7890
+# or ALL_PROXY=socks5://127.0.0.1:1080
+```
+
+Set `MODAL_DISABLE_API_PROXY=1` to turn proxy support off. Without `uv`, the same extra is `python3 -m pip install 'modal[api-proxy-support]>=1.0' huggingface_hub fastapi uvicorn pillow python-multipart pytest httpx`.
 
 Public Hugging Face files work without a token. For gated models or Civitai:
 
@@ -28,6 +52,8 @@ Do not put tokens in git.
 ## CLI
 
 ```bash
+python3 sdcpp_modal.py prefetch --all
+python3 sdcpp_modal.py prefetch --status
 python3 sdcpp_modal.py pull --all
 python3 sdcpp_modal.py ls
 python3 sdcpp_modal.py probe
@@ -40,7 +66,8 @@ python3 sdcpp_modal.py cost --official
 
 | Command | Where it runs | What it does |
 | --- | --- | --- |
-| `pull` | CPU | download URIs, a `--recipe`, or `--all` recipes onto volume `sdcpp-models` |
+| `prefetch` | CPU | download a recipe (default `z-image-turbo`), `--all`, or `--status` onto volume `sdcpp-models` |
+| `pull` | CPU | same downloads by raw URI, `--recipe`, or `--all` |
 | `put` | CPU | upload a small local file (init image, mask) to `uploads/` |
 | `ls` | CPU | list files already on that volume |
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
@@ -48,6 +75,8 @@ python3 sdcpp_modal.py cost --official
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 | `web` | local FastAPI | 生成 / 批量 / 任务 / 成本 / 画廊 workbench on `:7860` |
 | `cost` | local (+ optional Modal API) | print the call-chain ledger (see [成本教程](#成本教程)) |
+
+`prefetch` is the CPU path that writes recipe weights onto volume `sdcpp-models`. No GPU is used. Omit the recipe name to prefetch `z-image-turbo`. `--all` fetches every bundled recipe. `--status` lists which recipe files are already on the volume. `pull` is the same download with raw URIs. `generate` also calls this CPU ensure step for any missing files before the GPU run.
 
 `generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
 
@@ -67,9 +96,9 @@ The default GPU is `L40S`. `ideogram4` and `flux2-dev` default to `RTX-PRO-6000`
 The local workbench follows the [modal-sana](https://github.com/xiaoqianran/modal-sana) split: Interface / Core / Modal. `python3 sdcpp_modal.py web` starts FastAPI on `http://127.0.0.1:7860`. It is **not** `modal serve`. The page owns jobs, SSE progress, and a local gallery. GPU inference still goes through the existing `sdcpp-storage` + `sdcpp-cli` workers and the seven recipes.
 
 ```bash
-python3 -m pip install 'fastapi>=0.115' 'uvicorn>=0.30' pillow python-multipart
-python3 sdcpp_modal.py web
-python3 sdcpp_modal.py web --dry-run   # placeholder images, no GPU
+uv sync
+uv run python sdcpp_modal.py web
+uv run python sdcpp_modal.py web --dry-run   # placeholder images, no GPU
 ```
 
 Pages: **生成**, **批量**, **任务**, **成本**, **画廊**, **设置**. The static UI is plain HTML / CSS / JS talking to FastAPI, in Simplified Chinese. Default recipe is `z-image-turbo`. Selecting Ideogram 4 or FLUX.2 Dev also selects RTX PRO 6000. Job metadata lives in `~/.cache/sdcpp-modal/web/` (override with `SDCPP_WEB_DATA`). `--dry-run` or `SDCPP_WEB_DRY_RUN=1` writes prompt placeholders so the UI can be tested without Modal.
