@@ -33,6 +33,7 @@ python3 sdcpp_modal.py ls
 python3 sdcpp_modal.py probe
 python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png --publish
 python3 sdcpp_modal.py publish cat.png --recipe sd15 -p "a lovely cat"
+python3 sdcpp_modal.py web
 python3 sdcpp_modal.py cost
 python3 sdcpp_modal.py cost --official
 ```
@@ -45,6 +46,7 @@ python3 sdcpp_modal.py cost --official
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
 | `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
+| `web` | local FastAPI | Generate / Batch / Jobs / Gallery workbench on `:7860` |
 | `cost` | local (+ optional Modal API) | print the local billed-session ledger |
 
 `generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
@@ -59,6 +61,18 @@ python3 sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange c
 Do not convert Ideogram4 weights yourself. `pull --recipe ideogram4` downloads the prebuilt GGUF pair from [`leejet/ideogram-4-GGUF`](https://huggingface.co/leejet/ideogram-4-GGUF) (`ideogram4-Q4_0.gguf` and `ideogram4_uncond-Q4_0.gguf`), plus the FLUX.2 VAE and Qwen3-VL GGUF. There is no `convert` command in this CLI. The FLUX.2 VAE is gated, so set `HF_TOKEN`. Ideogram4 prompts must be JSON.
 
 The default GPU is `L40S`. A 24 GB `L4` can OOM on the diffusion compute buffer. `RTX6000` also works; A10 and A100 are blocked.
+
+## Web
+
+The local workbench follows the [modal-sana](https://github.com/xiaoqianran/modal-sana) split: Interface / Core / Modal. `python3 sdcpp_modal.py web` starts FastAPI on `http://127.0.0.1:7860`. It is **not** `modal serve`. The page owns jobs, SSE progress, and a local gallery. GPU inference still goes through the existing `sdcpp-storage` + `sdcpp-cli` workers and the seven recipes.
+
+```bash
+python3 -m pip install 'fastapi>=0.115' 'uvicorn>=0.30' pillow python-multipart
+python3 sdcpp_modal.py web
+python3 sdcpp_modal.py web --dry-run   # placeholder images, no GPU
+```
+
+Pages: **Generate**, **Batch**, **Jobs**, **Gallery**, **Settings**. Default recipe is `z-image-turbo`. Job metadata lives in `~/.cache/sdcpp-modal/web/` (override with `SDCPP_WEB_DATA`). `--dry-run` or `SDCPP_WEB_DRY_RUN=1` writes prompt placeholders so the UI can be tested without Modal.
 
 Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
 

@@ -60,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     if command.action == "cost":
         return cost_command(official=command.official)
 
+    if command.action == "web":
+        return _run_web(command)
+
     if command.action in {"pull", "ls", "put"}:
         with billed_app(storage_app, "storage"):
             if command.action == "pull":
@@ -182,6 +185,26 @@ def _publish(command, image_path: Path | None = None, payload: dict | None = Non
         print(summary)
     if trigger_pages_rebuild():
         print("triggered gallery Pages rebuild")
+    return 0
+
+
+def _run_web(command) -> int:
+    import os
+    import webbrowser
+
+    import uvicorn
+
+    if command.dry_run:
+        os.environ["SDCPP_WEB_DRY_RUN"] = "1"
+    url = f"http://{command.host}:{command.port}"
+    print(f"sdcpp-modal web → {url}")
+    print("Local FastAPI. GPU jobs use the existing sdcpp-cli / sdcpp-storage Modal apps.")
+    if command.open_browser:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+    uvicorn.run("web.server:app", host=command.host, port=command.port, reload=False, log_level="info")
     return 0
 
 
