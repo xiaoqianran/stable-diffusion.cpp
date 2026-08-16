@@ -27,3 +27,5 @@ examples/modal/**/*.pyc
 examples/modal/.pytest_cache/
 examples/modal/gallery/site/
 examples/modal/gallery/.dataset/
+examples/modal/.sdcpp-cost.jsonl
+examples/modal/.sdcpp-cost/

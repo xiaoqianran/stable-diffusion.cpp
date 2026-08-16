@@ -21,6 +21,7 @@ from sdcpp_hooks.artifacts import (
 from sdcpp_hooks.contract import GenerateRequest
 from sdcpp_hooks.hardware import collect_run_environment
 from sdcpp_hooks.hooks import generate, use_engine, use_models
+from sdcpp_hooks.meter import ContainerMeter
 from sdcpp_hooks.probe import probe_cli_help
 from sdcpp_hooks.runner import run_cli
 
@@ -116,8 +117,9 @@ def _pull_uris(uris: list[str]) -> list[dict]:
     return rows
 
 
-storage_app = modal.App("sdcpp-storage", image=_cpu_image())
-gpu_app = modal.App("sdcpp-cli", image=_cuda_image())
+_APP_TAGS = {"project": "sdcpp-modal"}
+storage_app = modal.App("sdcpp-storage", image=_cpu_image(), tags={**_APP_TAGS, "role": "storage"})
+gpu_app = modal.App("sdcpp-cli", image=_cuda_image(), tags={**_APP_TAGS, "role": "gpu"})
 
 
 @storage_app.function(
@@ -201,9 +203,16 @@ def probe() -> dict:
 class SDEngine:
     @modal.enter()
     def start(self) -> None:
+        self._meter = ContainerMeter.start("SDEngine", gpu=GPU)
         help_text, binary = probe_cli_help()
         self.engine = use_engine(help_text=help_text, binary=binary)
         self.binary = binary
+
+    @modal.exit()
+    def stop(self) -> None:
+        meter = getattr(self, "_meter", None)
+        if meter is not None:
+            meter.stop()
 
     @modal.method()
     def generate(self, payload: dict) -> dict:

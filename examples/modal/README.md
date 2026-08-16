@@ -33,6 +33,8 @@ python3 sdcpp_modal.py ls
 python3 sdcpp_modal.py probe
 python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png --publish
 python3 sdcpp_modal.py publish cat.png --recipe sd15 -p "a lovely cat"
+python3 sdcpp_modal.py cost
+python3 sdcpp_modal.py cost --official
 ```
 
 | Command | Where it runs | What it does |
@@ -43,10 +45,13 @@ python3 sdcpp_modal.py publish cat.png --recipe sd15 -p "a lovely cat"
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
 | `generate` | CPU, then GPU (`SDCPP_GPU`, default `L4`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
+| `cost` | local (+ optional Modal API) | print the local billed-session ledger |
 
 `generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
 
 Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
+
+Cost tracking lives in `sdcpp_hooks/cost.py` and `sdcpp_hooks/modal_meter.py`, not in `sd-cli`. Every `app.run()` and `.remote()` is a billed span. GPU containers also record enter→exit lifetime, including idle until scale-to-zero. Estimates use `modal.Workspace.billing.rates()` when available, otherwise a snapshot of those rates. `cost --official` prints the workspace invoice summary. Session and remote windows overlap, so the ledger does not add them together.
 
 Common `sd-cli` flags are first-class (`--vae`, `--diffusion-model`, `--init-img`, `--control-net`, `--taesd`, `--sampling-method`, ...). Any other remote flag can be appended and is forwarded if `probe` sees it:
 
@@ -86,6 +91,7 @@ Then pass `--model /models/hf/local/v1-5-pruned-emaonly.safetensors`.
 | `HF_ENDPOINT` | `https://huggingface.co` |
 | `SDCPP_GALLERY_DATASET` | `seachen/stable-diffusion-cpp-gallery` |
 | `SDCPP_GITHUB_REPO` | `xiaoqianran/stable-diffusion.cpp` |
+| `SDCPP_COST_LOG` | `~/.cache/sdcpp-modal/cost.jsonl` |
 
 ## Gallery dataset and Pages
 
