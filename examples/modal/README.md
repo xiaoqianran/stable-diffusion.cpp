@@ -73,7 +73,7 @@ python3 sdcpp_modal.py cost --official
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
 | `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
-| `web` | local FastAPI | 生成 / 批量 / 任务 / 成本 / 画廊 workbench on `:7860` |
+| `web` | local FastAPI | 生成 / 批量 / 任务 / 成本 / 画廊 workbench on `:7863` |
 | `cost` | local (+ optional Modal API) | print the call-chain ledger (see [成本教程](#成本教程)) |
 
 `prefetch` is the CPU path that writes recipe weights onto volume `sdcpp-models`. No GPU is used. Omit the recipe name to prefetch `z-image-turbo`. `--all` fetches every bundled recipe. `--status` lists which recipe files are already on the volume. `pull` is the same download with raw URIs. `generate` also calls this CPU ensure step for any missing files before the GPU run.
@@ -93,7 +93,7 @@ The default GPU is `L40S`. `ideogram4` and `flux2-dev` default to `RTX-PRO-6000`
 
 ## Web
 
-The local workbench follows the [modal-sana](https://github.com/xiaoqianran/modal-sana) split: Interface / Core / Modal. `python3 sdcpp_modal.py web` starts FastAPI on `http://127.0.0.1:7860`. It is **not** `modal serve`. The page owns jobs, SSE progress, and a local gallery. GPU inference still goes through the existing `sdcpp-storage` + `sdcpp-cli` workers and the seven recipes.
+The local workbench follows the [modal-sana](https://github.com/xiaoqianran/modal-sana) split: Interface / Core / Modal. `python3 sdcpp_modal.py web` starts FastAPI on `http://127.0.0.1:7863`. It is **not** `modal serve`. The page owns jobs, SSE progress, and a local gallery. GPU inference still goes through the existing `sdcpp-storage` + `sdcpp-cli` workers and the seven recipes.
 
 ```bash
 uv sync
@@ -212,7 +212,7 @@ python3 -m pip install 'fastapi>=0.115' 'uvicorn>=0.30' pillow python-multipart 
 python3 sdcpp_modal.py web
 ```
 
-浏览器打开 <http://127.0.0.1:7860>。左侧应有：生成 / 批量 / 任务 / **成本** / 画廊 / 设置。
+浏览器打开 <http://127.0.0.1:7863>。左侧应有：生成 / 批量 / 任务 / **成本** / 画廊 / 设置。
 
 还没装 Modal token、只想看页面时：
 
@@ -367,8 +367,8 @@ per-second gpu RTX-PRO-6000 $0.000845531/s  (3.03000/h)
 工作台读同一本账。`GET /api/cost` 是全部 traces；`GET /api/cost?job_id=` 只看一个任务：
 
 ```bash
-curl -s 'http://127.0.0.1:7860/api/cost' | python3 -m json.tool
-curl -s 'http://127.0.0.1:7860/api/cost?job_id=job_ab12cd34ef'
+curl -s 'http://127.0.0.1:7863/api/cost' | python3 -m json.tool
+curl -s 'http://127.0.0.1:7863/api/cost?job_id=job_ab12cd34ef'
 ```
 
 `GET /api/jobs` / `GET /api/jobs/{id}` 带 `cost_usd`、`cost_events`、`cost_chain`。换账本路径：

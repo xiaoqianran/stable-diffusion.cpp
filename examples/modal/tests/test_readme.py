@@ -7,7 +7,7 @@ README = Path(__file__).resolve().parents[1] / "README.md"
 def test_readme_has_cost_tutorial():
     text = README.read_text(encoding="utf-8")
     assert "## 成本教程" in text
-    assert "http://127.0.0.1:7860" in text
+    assert "http://127.0.0.1:7863" in text
     assert "python3 sdcpp_modal.py web --dry-run" in text
     assert "python3 sdcpp_modal.py cost" in text
     assert "GET /api/cost" in text
