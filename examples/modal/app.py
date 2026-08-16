@@ -241,6 +241,9 @@ def convert_fp8_to_bf16(src: str, dest: str) -> dict:
     if output.exists() and output.stat().st_size > 0:
         return {"path": dest, "bytes": output.stat().st_size, "skipped": True}
     output.parent.mkdir(parents=True, exist_ok=True)
+    leftover = output.with_name(output.name + ".tmp")
+    if leftover.exists():
+        leftover.unlink()
     completed = subprocess.run(
         [
             sys.executable,
