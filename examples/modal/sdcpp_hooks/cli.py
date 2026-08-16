@@ -62,6 +62,10 @@ class CliCommand:
     model_id: str = ""
     image: str = ""
     official: bool = False
+    host: str = "127.0.0.1"
+    port: int = 7860
+    dry_run: bool = False
+    open_browser: bool = True
 
     def to_payload(self) -> dict[str, Any]:
         request = apply_recipe(
@@ -176,6 +180,12 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         help="also print modal.Workspace.billing.summary for this month",
     )
 
+    web = sub.add_parser("web", help="local FastAPI workbench (not modal serve)")
+    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--port", type=int, default=7860)
+    web.add_argument("--dry-run", action="store_true", help="all jobs use placeholder images")
+    web.add_argument("--no-open", action="store_true", help="do not open a browser")
+
     args, unknown = parser.parse_known_args(list(argv))
     if unknown and args.action != "generate":
         parser.error("unrecognized arguments: " + " ".join(unknown))
@@ -230,4 +240,8 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         model_id=getattr(args, "model_id", "") or "",
         image=getattr(args, "image", "") or "",
         official=bool(getattr(args, "official", False)),
+        host=getattr(args, "host", "127.0.0.1") or "127.0.0.1",
+        port=int(getattr(args, "port", 7860) or 7860),
+        dry_run=bool(getattr(args, "dry_run", False)),
+        open_browser=not bool(getattr(args, "no_open", False)),
     )

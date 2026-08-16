@@ -196,6 +196,16 @@ def test_parse_publish_and_generate_publish_flag():
     assert generate.model_id == ""
 
 
+def test_parse_web_defaults_to_local_workbench():
+    command = parse_argv(["web", "--dry-run", "--no-open", "--port", "7870"])
+
+    assert command.action == "web"
+    assert command.dry_run is True
+    assert command.open_browser is False
+    assert command.port == 7870
+    assert command.host == "127.0.0.1"
+
+
 def test_parse_put_collects_local_files():
     command = parse_argv(["put", "cat.png", "mask.png"])
 
