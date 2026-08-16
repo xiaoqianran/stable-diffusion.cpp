@@ -47,7 +47,7 @@ python3 sdcpp_modal.py cost --official
 | `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 | `web` | local FastAPI | 生成 / 批量 / 任务 / 成本 / 画廊 workbench on `:7860` |
-| `cost` | local (+ optional Modal API) | print the local billed-session ledger |
+| `cost` | local (+ optional Modal API) | print the call-chain ledger (see [成本教程](#成本教程)) |
 
 `generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
 
@@ -72,11 +72,11 @@ python3 sdcpp_modal.py web
 python3 sdcpp_modal.py web --dry-run   # placeholder images, no GPU
 ```
 
-Pages: **生成**, **批量**, **任务**, **成本**, **画廊**, **设置**. The static UI is plain HTML / CSS / JS talking to FastAPI, in Simplified Chinese. Default recipe is `z-image-turbo`. Selecting Ideogram 4 or FLUX.2 Dev also selects RTX PRO 6000. Job metadata lives in `~/.cache/sdcpp-modal/web/` (override with `SDCPP_WEB_DATA`). `--dry-run` or `SDCPP_WEB_DRY_RUN=1` writes prompt placeholders so the UI can be tested without Modal. The **成本** page lists every `app.run` / `.remote` span, the per-second rate, `rate × seconds = line cost`, and the `job_…` / `img_…` it belongs to.
+Pages: **生成**, **批量**, **任务**, **成本**, **画廊**, **设置**. The static UI is plain HTML / CSS / JS talking to FastAPI, in Simplified Chinese. Default recipe is `z-image-turbo`. Selecting Ideogram 4 or FLUX.2 Dev also selects RTX PRO 6000. Job metadata lives in `~/.cache/sdcpp-modal/web/` (override with `SDCPP_WEB_DATA`). `--dry-run` or `SDCPP_WEB_DRY_RUN=1` writes prompt placeholders so the UI can be tested without Modal.
 
 Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
 
-Cost tracking lives in `sdcpp_hooks/cost.py` and `sdcpp_hooks/modal_meter.py`, not in `sd-cli`. Every `app.run()` and `.remote()` is a billed span, written to `SDCPP_COST_LOG` with `job_id` / `image_id` / `parent_id` so the workbench can rebuild the call chain. GPU containers also record enter→exit lifetime, including idle until scale-to-zero. Estimates use `modal.Workspace.billing.rates()` when available, otherwise a snapshot of those rates. `GET /api/cost` and `cost --official` expose the same ledger; the CLI prints the tree. Session and remote windows overlap, so the ledger does not add them together. Local `--dry-run` jobs appear as `$0` `local:dry_run` rows so the page is not empty.
+How to read every Modal charge, the per-second rate, and the matching job: **[成本教程](#成本教程)**.
 
 Common `sd-cli` flags are first-class (`--vae`, `--diffusion-model`, `--init-img`, `--control-net`, `--taesd`, `--sampling-method`, ...). Any other remote flag can be appended and is forwarded if `probe` sees it:
 
@@ -168,6 +168,198 @@ python3 sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turb
 | `SDCPP_GALLERY_DATASET` | `seachen/stable-diffusion-cpp-gallery` |
 | `SDCPP_GITHUB_REPO` | `xiaoqianran/stable-diffusion.cpp` |
 | `SDCPP_COST_LOG` | `~/.cache/sdcpp-modal/cost.jsonl` |
+
+## 成本教程
+
+工作台侧栏的 **成本** 就是 Modal 账本。每一笔 `app.run` / `.remote` 都会留下一行：调用链、精确到秒的费率、`费率 × 秒数 = 这一笔`、以及对应的 `job_…` / `img_…`。计费不进 `sd-cli`，只在 `sdcpp_hooks/cost.py` 和 `sdcpp_hooks/modal_meter.py`。
+
+下面按顺序做一遍：先演练（$0），再真生成，再读调用链。
+
+### 1. 打开工作台
+
+```bash
+cd examples/modal
+python3 -m pip install 'fastapi>=0.115' 'uvicorn>=0.30' pillow python-multipart 'modal>=0.64'
+python3 sdcpp_modal.py web
+```
+
+浏览器打开 <http://127.0.0.1:7860>。左侧应有：生成 / 批量 / 任务 / **成本** / 画廊 / 设置。
+
+还没装 Modal token、只想看页面时：
+
+```bash
+python3 sdcpp_modal.py web --dry-run
+```
+
+演练不会打 GPU，占位图仍会写成一条任务，成本页记 `local:dry_run` · **$0**。
+
+### 2. 演练：确认任务能挂上账本
+
+1. 打开 **生成**。
+2. 提示词随便写，例如 `雨夜城市`。
+3. 配方用默认 `z-image-turbo`，显卡保持 `L40S`。
+4. 展开「尺寸与采样」，勾选 **演练（不调用 Modal / GPU）**。
+5. 点 **开始生成**。
+6. 打开 **任务**：费用列应是 `演练 · $0`。点任务编号，详情里有调用链。
+7. 打开 **成本**，或点费用跳到 `#/cost?job=job_…`。
+
+此时账本里至少有一行：
+
+| 调用链 | 时长 | 费用 | 每秒 | 任务 |
+| --- | --- | --- | --- | --- |
+| `local:dry_run` | 0.000s | $0 | $0/s | `job_…` |
+
+这只证明页面和任务对得上。**$0 不是 Modal 报价。**
+
+### 3. 真生成：一次完整调用链
+
+先保证 token 和权重在（`modal token set`，`export HF_TOKEN=…`，至少 `python3 sdcpp_modal.py pull --recipe z-image-turbo`）。
+
+1. **生成**页取消「演练」。
+2. 仍用 `z-image-turbo` + `L40S`，张数 1，点 **开始生成**。
+3. 等任务变成「已完成」，打开 **成本**。
+
+一次工作台出图会写下 **两条 session**，每条下面挂 `.remote`：
+
+```
+session:storage                          app.run(sdcpp-storage)  只有 CPU + 内存
+  ↳ remote:ensure_artifacts              确认 / 补齐卷上的权重
+session:gpu                              app.run(sdcpp-cli)      会话本身仍按 CPU 计价
+  ↳ remote:generate                      真正占 GPU 的那一段，挂 img_…
+```
+
+命令行同样记账，只是没有 `job_…`：
+
+```bash
+python3 sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turbo -o /tmp/zimage.png
+python3 sdcpp_modal.py cost
+```
+
+`ideogram4` / `flux2-dev` 默认 `RTX-PRO-6000`（$3.03/h），其余默认 `L40S`（$1.95/h）。A10 / A100 已禁用。
+
+### 4. 怎么读「成本」这一页
+
+页顶是 **已入账**：去重后的美元、笔数、计费秒数。下面一排是当前费率（L40S / L4 / RTX-PRO-6000 / CPU / 内存）。再下面是调用链表。
+
+| 列 | 含义 |
+| --- | --- |
+| 调用链 | `phase:name`。无缩进 = `app.run` 会话；`↳` = 这次会话里的 `.remote` |
+| 时长 | 这一段墙钟秒数，精确到 0.001s |
+| 费用 | `usd_per_second × duration_s`，量化到 $0.000001 |
+| 每秒 | 这一段资源的合计费率（GPU + 0.125 CPU + 1 GiB 内存） |
+| 拆分 | `gpu $…/s × Ns = $…` · `cpu …` · `memory …` |
+| GPU | `L40S` / `L4` / `RTX-PRO-6000`；CPU 会话为 — |
+| 任务 | `job_…`，点进任务详情 |
+| 图片 | `img_…`，只挂在 `remote:generate` 上 |
+
+同一页下方还有「按任务汇总」。任务详情里的「调用链」按钮等于 `#/cost?job=job_…`。
+
+设置页的「成本账本」是 jsonl 路径，默认 `~/.cache/sdcpp-modal/cost.jsonl`。
+
+### 5. 每秒费率
+
+数字来自 `modal.Workspace.billing.rates()`；Modal 连不上时用 2026-08-15 工作区 `pythonmoive` 的快照。工作台顶栏会写 `modal-billing-rates` 或 `fallback`。
+
+默认容器按 **0.125 CPU + 1 GiB 内存** 计价（Modal 未公布真实 reserved 时的假定）。
+
+| 资源 | 每小时 | 每秒（写入账本的精度） | 1 秒里还有 |
+| --- | ---: | ---: | --- |
+| L40S GPU | $1.95 | $0.000541667/s | + CPU + 内存 → **$0.000545531/s** |
+| L4 GPU | $0.80 | $0.000222222/s | + CPU + 内存 → **$0.000226087/s** |
+| RTX-PRO-6000 GPU | $3.03 | $0.000841667/s | + CPU + 内存 → **$0.000845531/s** |
+| CPU 0.125 核 | $0.04730 × 0.125 | **$0.000001642/s** | storage / session 会话 |
+| 内存 1 GiB | $0.008 | **$0.000002222/s** | 同上 |
+| CPU+内存（无 GPU） | — | **$0.000003865/s** | `session:*`、`remote:ensure_artifacts` |
+
+卷存储 $0.09/GiB·月 **不按次**写入这本账，只在官方账单里。
+
+### 6. 一笔钱怎么算
+
+```
+这一笔 = (GPU小时价/3600 + CPU小时价×0.125/3600 + 内存小时价×1/3600) × 秒数
+```
+
+对照一次真实出图（数字会随墙钟变化，费率不变）：
+
+| 调用 | 卡 | 时长 | 每秒 | 这一笔 |
+| --- | --- | ---: | ---: | ---: |
+| `remote:ensure_artifacts` | CPU | 8.000s | $0.000003865/s | $0.000031 |
+| `remote:generate` | L40S | 47.000s | $0.000545531/s | $0.025640 |
+| `remote:generate` | RTX-PRO-6000 | 33.000s | $0.000845531/s | $0.027903 |
+
+拆开 47s 的 L40S：
+
+```
+gpu    $0.000541667/s × 47.000s = $0.025458
+cpu    $0.000001642/s × 47.000s = $0.000077
+memory $0.000002222/s × 47.000s = $0.000104
+合计   $0.000545531/s × 47.000s = $0.025640
+```
+
+所以：**Pro 6000 更快，但不一定更便宜。** 同样一张图，33s × $3.03/h ≈ $0.0279，47s × $1.95/h ≈ $0.0256。
+
+### 7. 为什么不能把 session 和 remote 加在一起
+
+`app.run()` 从进到出是一条 **session**。里面的 `.remote()` 是同一段墙钟上的 **remote**。两段重叠。把两行的 `费用` 列加起来会把 GPU 时间算两次。
+
+已入账只加：
+
+1. 所有 `remote`（以及演练的 `local`）
+2. `session` 比 remote 多出来的那几秒，按 **CPU+内存** 计价（连上 Modal、镜像拉取、会话收尾）
+
+GPU 容器 `@modal.enter` → `@modal.exit`（含空闲到 `SDCPP_IDLE_SECONDS` 缩成 0）写在 worker 账本，默认 `/models/.sdcpp-cost/events.jsonl`，需要卷可写。工作台「已入账」看的是本机 `SDCPP_COST_LOG`，不含那段空闲，除非你自己把 worker 行合进来。
+
+### 8. 命令行和 API
+
+```bash
+# 本机账本：调用树 + 每秒费率 + 累计已入账
+python3 sdcpp_modal.py cost
+
+# 再加 Modal 官方账期汇总（metered / billed / 分项）
+python3 sdcpp_modal.py cost --official
+```
+
+CLI 示例：
+
+```
+trace a1b2c3d4e5f6  0.025648  jobs job_ab12cd34ef  4 calls
+  session:storage  9.200s  $0.000036  $0.000003865/s  job job_ab12cd34ef
+    remote:ensure_artifacts  8.100s  $0.000031  $0.000003865/s  job job_ab12cd34ef
+  session:gpu  48.400s  $0.000187  $0.000003865/s  job job_ab12cd34ef
+    remote:generate  47.000s  $0.025640  $0.000545531/s  gpu L40S  job job_ab12cd34ef  img img_ff11aa22bb
+ledger /home/you/.cache/sdcpp-modal/cost.jsonl
+all-time billed estimate $0.025648
+per-second cpu $0.000001642/s  mem $0.000002222/s
+per-second gpu L40S $0.000545531/s  (1.95000/h)
+per-second gpu L4 $0.000226087/s  (0.80000/h)
+per-second gpu RTX-PRO-6000 $0.000845531/s  (3.03000/h)
+```
+
+工作台读同一本账。`GET /api/cost` 是全部 traces；`GET /api/cost?job_id=` 只看一个任务：
+
+```bash
+curl -s 'http://127.0.0.1:7860/api/cost' | python3 -m json.tool
+curl -s 'http://127.0.0.1:7860/api/cost?job_id=job_ab12cd34ef'
+```
+
+`GET /api/jobs` / `GET /api/jobs/{id}` 带 `cost_usd`、`cost_events`、`cost_chain`。换账本路径：
+
+```bash
+export SDCPP_COST_LOG=$PWD/cost.jsonl
+python3 sdcpp_modal.py web
+```
+
+### 9. 对不上官方账单时
+
+| 现象 | 原因 |
+| --- | --- |
+| 成本页是空的 | 还没跑过生成 / 演练，或 `SDCPP_COST_LOG` 指到了另一份文件 |
+| 只有 `local:dry_run` · $0 | 勾了演练，或 `SDCPP_WEB_DRY_RUN=1` |
+| 任务费用是 $0，但 Modal 控制台有钱 | 看的是旧任务；打开 **成本** 看全部 traces |
+| 自己把表里两行加起来比「已入账」大 | session 与 remote 重叠，见第 7 节 |
+| 和 `cost --official` 对不上 | 官方含本账期所有 app、卷存储、别人的 run；本页只估计 **这台机器记下的 sdcpp session/remote** |
+| Pro 6000 出图却按 L40S 计价 | 旧版本的 bug，当前工作台会在生成前写入 `SDCPP_GPU` |
+| 想清空 | 删掉 `SDCPP_COST_LOG` 那个 jsonl（不可恢复） |
 
 ## Gallery dataset and Pages
 
