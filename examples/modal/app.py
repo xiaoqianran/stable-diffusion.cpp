@@ -19,6 +19,7 @@ from sdcpp_hooks.artifacts import (
     resolve_artifacts,
 )
 from sdcpp_hooks.contract import GenerateRequest
+from sdcpp_hooks.gpu import normalize_gpu
 from sdcpp_hooks.hardware import collect_run_environment
 from sdcpp_hooks.hooks import generate, use_engine, use_models
 from sdcpp_hooks.meter import ContainerMeter
@@ -33,19 +34,10 @@ IMAGE_TAG = os.environ.get(
 )
 def _gpu_name() -> str:
     raw = os.environ.get("SDCPP_GPU", "L40S")
-    text = raw.strip().upper().replace(" ", "-")
-    aliases = {
-        "RTX-PRO-6000": "RTX6000",
-        "RTXPRO6000": "RTX6000",
-        "PRO-6000": "RTX6000",
-        "PRO6000": "RTX6000",
-    }
-    gpu = aliases.get(text, text)
-    if gpu.startswith("A10") or gpu.startswith("A100"):
-        raise RuntimeError(
-            f"SDCPP_GPU={raw!r} is blocked; use L4, L40S, or RTX6000 (RTX PRO 6000)"
-        )
-    return gpu
+    try:
+        return normalize_gpu(raw)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 GPU = _gpu_name()
@@ -265,7 +257,7 @@ class SDEngine:
             help_text=self.engine.raw_help,
             binary=self.binary,
         ))
-        host.setdefault("modal_gpu", GPU)
+        host.setdefault("modal_gpu", os.environ.get("SDCPP_GPU", GPU))
         host.setdefault("sdcpp_image", IMAGE_TAG)
         return {
             "images": [base64.b64encode(image).decode("ascii") for image in result.images],

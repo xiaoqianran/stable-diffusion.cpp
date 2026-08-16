@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .recipes import RECIPES
+from .gpu import default_gpu_for_recipe
 from .web_catalog import default_recipe, normalize_gpu
 from .web_events import Event, EventBus
 from .web_generator import MockGenerator, ModalGenerator
@@ -78,7 +79,8 @@ class JobService:
         recipe = config.get("recipe") or default_recipe()
         if recipe not in RECIPES:
             raise KeyError(f"unknown recipe {recipe!r}")
-        gpu = normalize_gpu(str(config.get("gpu") or "L40S"))
+        gpu_raw = config.get("gpu")
+        gpu = normalize_gpu(str(gpu_raw) if gpu_raw not in (None, "") else default_gpu_for_recipe(recipe))
         count = max(1, int(config.get("count") or 1))
         base_seed = config.get("seed")
         seed0 = int(base_seed) if base_seed not in (None, "") else 101
