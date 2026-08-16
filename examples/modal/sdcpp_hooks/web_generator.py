@@ -78,12 +78,17 @@ class ModalGenerator:
         items: list[dict[str, Any]],
         *,
         gpu: str,
+        job_id: str = "",
     ) -> Iterator[dict[str, Any]]:
         if not items:
             return
+        import os
+
         from app import SDEngine, ensure_artifacts, gpu_app, storage_app
+        from .meter import bind_task
         from .modal_meter import billed_app, billed_remote
 
+        os.environ["SDCPP_GPU"] = gpu
         first = apply_recipe(
             items[0]["recipe"],
             prompt=items[0]["prompt"],
@@ -93,48 +98,50 @@ class ModalGenerator:
             steps=items[0].get("steps"),
             cfg_scale=items[0].get("cfg_scale"),
         ).to_dict()
-        with billed_app(storage_app, "storage"):
-            billed_remote(ensure_artifacts, first, name="ensure_artifacts")
-        with billed_app(gpu_app, "gpu"):
-            try:
-                engine = SDEngine.with_options(gpu=gpu)()
-            except Exception:
-                engine = SDEngine()
-            for item in items:
-                request = apply_recipe(
-                    item["recipe"],
-                    prompt=item["prompt"],
-                    seed=item["seed"],
-                    width=item.get("width"),
-                    height=item.get("height"),
-                    steps=item.get("steps"),
-                    cfg_scale=item.get("cfg_scale"),
-                )
-                result = billed_remote(
-                    engine.generate,
-                    request.to_dict(),
-                    name="generate",
-                    gpu=True,
-                )
-                images = []
-                for raw in result.get("images") or []:
-                    if isinstance(raw, (bytes, bytearray)):
-                        images.append(bytes(raw))
-                    else:
-                        import base64
+        with bind_task(job_id=job_id, recipe=items[0]["recipe"], gpu=gpu):
+            with billed_app(storage_app, "storage"):
+                billed_remote(ensure_artifacts, first, name="ensure_artifacts")
+            with billed_app(gpu_app, "gpu"):
+                try:
+                    engine = SDEngine.with_options(gpu=gpu)()
+                except Exception:
+                    engine = SDEngine()
+                for item in items:
+                    request = apply_recipe(
+                        item["recipe"],
+                        prompt=item["prompt"],
+                        seed=item["seed"],
+                        width=item.get("width"),
+                        height=item.get("height"),
+                        steps=item.get("steps"),
+                        cfg_scale=item.get("cfg_scale"),
+                    )
+                    with bind_task(image_id=item.get("id"), recipe=item["recipe"]):
+                        result = billed_remote(
+                            engine.generate,
+                            request.to_dict(),
+                            name="generate",
+                            gpu=True,
+                        )
+                    images = []
+                    for raw in result.get("images") or []:
+                        if isinstance(raw, (bytes, bytearray)):
+                            images.append(bytes(raw))
+                        else:
+                            import base64
 
-                        images.append(base64.b64decode(raw))
-                yield {
-                    **item,
-                    "images": images,
-                    "width": result.get("width") or request.width,
-                    "height": result.get("height") or request.height,
-                    "steps": result.get("steps") or request.steps,
-                    "cfg_scale": result.get("cfg_scale") or request.cfg_scale,
-                    "seed": result.get("seed") or item["seed"],
-                    "duration_ms": result.get("duration_ms"),
-                    "host": result.get("host") or {},
-                    "argv": result.get("argv"),
-                    "dropped_fields": result.get("dropped_fields"),
-                    "cost": result.get("cost"),
-                }
+                            images.append(base64.b64decode(raw))
+                    yield {
+                        **item,
+                        "images": images,
+                        "width": result.get("width") or request.width,
+                        "height": result.get("height") or request.height,
+                        "steps": result.get("steps") or request.steps,
+                        "cfg_scale": result.get("cfg_scale") or request.cfg_scale,
+                        "seed": result.get("seed") or item["seed"],
+                        "duration_ms": result.get("duration_ms"),
+                        "host": result.get("host") or {},
+                        "argv": result.get("argv"),
+                        "dropped_fields": result.get("dropped_fields"),
+                        "cost": result.get("cost"),
+                    }

@@ -7,7 +7,7 @@ import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from .cost import CostEvent, PriceBook, ResourcePlan, billed_usd, format_event, format_usd, make_event
 
@@ -15,6 +15,8 @@ from .cost import CostEvent, PriceBook, ResourcePlan, billed_usd, format_event, 
 _TRACE_ID: ContextVar[str] = ContextVar("sdcpp_cost_trace", default="")
 _PRICE_BOOK: ContextVar[PriceBook | None] = ContextVar("sdcpp_cost_book", default=None)
 _LAST_EVENT: ContextVar[CostEvent | None] = ContextVar("sdcpp_cost_last", default=None)
+_PARENT_ID: ContextVar[str] = ContextVar("sdcpp_cost_parent", default="")
+_TASK: ContextVar[dict] = ContextVar("sdcpp_cost_task", default={})
 
 
 def current_trace_id() -> str:
@@ -27,6 +29,33 @@ def current_book() -> PriceBook:
 
 def last_event() -> CostEvent | None:
     return _LAST_EVENT.get()
+
+
+def current_task() -> dict:
+    return dict(_TASK.get() or {})
+
+
+def current_parent_id() -> str:
+    return _PARENT_ID.get()
+
+
+@contextmanager
+def bind_task(**fields: Any) -> Iterator[dict]:
+    merged = {**current_task(), **{key: value for key, value in fields.items() if value not in (None, "")}}
+    token = _TASK.set(merged)
+    try:
+        yield merged
+    finally:
+        _TASK.reset(token)
+
+
+@contextmanager
+def bind_parent(parent_id: str) -> Iterator[str]:
+    token = _PARENT_ID.set(parent_id)
+    try:
+        yield parent_id
+    finally:
+        _PARENT_ID.reset(token)
 
 
 def client_ledger_path() -> Path:
@@ -75,6 +104,51 @@ def worker_ledger() -> Ledger | None:
     return Ledger(path) if path else None
 
 
+def _task_fields(extra: dict | None = None) -> dict[str, Any]:
+    task = current_task()
+    extra = dict(extra or {})
+    merged = {**task, **extra}
+    if "parent_id" in extra:
+        parent_id = str(extra.get("parent_id") or "")
+    else:
+        parent_id = str(merged.get("parent_id") or current_parent_id() or "")
+    return {
+        "extra": merged,
+        "job_id": str(merged.get("job_id") or ""),
+        "image_id": str(merged.get("image_id") or ""),
+        "recipe": str(merged.get("recipe") or ""),
+        "parent_id": parent_id,
+    }
+
+
+def record_event(
+    plan: ResourcePlan,
+    *,
+    phase: str,
+    duration_ms: int = 0,
+    book: PriceBook | None = None,
+    ledger: Ledger | None = None,
+    extra: dict | None = None,
+    event_id: str | None = None,
+) -> CostEvent:
+    event = make_event(
+        event_id=event_id or uuid.uuid4().hex[:12],
+        plan=plan,
+        duration_ms=duration_ms,
+        book=book or current_book(),
+        phase=phase,
+        trace_id=current_trace_id(),
+        **_task_fields(extra),
+    )
+    _LAST_EVENT.set(event)
+    dest = ledger if ledger is not None else client_ledger()
+    try:
+        dest.append(event)
+    except OSError:
+        pass
+    return event
+
+
 @contextmanager
 def span(
     plan: ResourcePlan,
@@ -83,23 +157,25 @@ def span(
     book: PriceBook | None = None,
     ledger: Ledger | None = None,
     extra: dict | None = None,
-) -> Iterator[None]:
+    event_id: str | None = None,
+) -> Iterator[str]:
     book = book or current_book()
     started = time.perf_counter()
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    event_id = event_id or uuid.uuid4().hex[:12]
     try:
-        yield
+        yield event_id
     finally:
         duration_ms = int((time.perf_counter() - started) * 1000)
         event = make_event(
-            event_id=uuid.uuid4().hex[:12],
+            event_id=event_id,
             plan=plan,
             duration_ms=duration_ms,
             book=book,
             phase=phase,
             trace_id=current_trace_id(),
             started_at=started_at,
-            extra=extra,
+            **_task_fields(extra),
         )
         _LAST_EVENT.set(event)
         if ledger is not None:
@@ -133,6 +209,7 @@ class ContainerMeter:
             phase="container",
             trace_id=current_trace_id(),
             started_at=self._started_at,
+            **_task_fields(),
         )
         if self._ledger is not None:
             try:

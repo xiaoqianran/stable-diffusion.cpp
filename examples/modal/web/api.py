@@ -10,7 +10,9 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from sdcpp_hooks.cost_view import ledger_report
 from sdcpp_hooks.gpu import DEFAULT_GPU, default_gpu_for_recipe
+from sdcpp_hooks.meter import client_ledger_path
 from sdcpp_hooks.web_catalog import default_recipe, list_gpus, list_models, normalize_gpu
 from sdcpp_hooks.web_events import EventBus
 from sdcpp_hooks.web_jobs import JobService
@@ -88,6 +90,11 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/cost")
+def cost_ledger(job_id: str | None = None) -> dict[str, Any]:
+    return ledger_report(job_id=job_id)
+
+
 @router.get("/meta")
 def meta() -> dict[str, Any]:
     return {
@@ -99,6 +106,7 @@ def meta() -> dict[str, Any]:
             "gpu": DEFAULT_GPU,
             "port": 7860,
             "data_dir": str(_DATA_DIR),
+            "cost_log": str(client_ledger_path()),
         },
         "version": "0.1.0",
         "runtime": {

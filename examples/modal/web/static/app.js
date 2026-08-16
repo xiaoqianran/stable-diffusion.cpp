@@ -168,6 +168,135 @@ function formPayload(form) {
   };
 }
 
+function money(value) {
+  if (value == null || value === "") return "—";
+  const text = String(value);
+  return text.startsWith("$") ? text : `$${text}`;
+}
+
+function jobCostLabel(job) {
+  if (job?.config?.dry_run) return "演练 · $0";
+  if (job?.cost_usd == null) return "计费中";
+  return money(job.cost_usd);
+}
+
+function flattenChain(input) {
+  if (!input || !input.length) return [];
+  if (input[0].chain) {
+    return input.flatMap((trace) => trace.chain || []);
+  }
+  return input;
+}
+
+function renderCostRates(rates) {
+  const cards = rates?.cards || [];
+  if (!cards.length) return "";
+  return `<div class="rate-strip">${cards.map((card) => `
+    <span class="rate-chip">
+      <strong>${escapeHtml(card.label)}</strong>
+      ${card.note ? `<span class="muted">${escapeHtml(card.note)}</span>` : ""}
+      ${escapeHtml(money(card.usd_per_second))}/s
+      ${card.usd_per_hour ? ` · ${escapeHtml(money(card.usd_per_hour))}/h` : ""}
+    </span>`).join("")}</div>`;
+}
+
+function renderCostChain(input, caption = "Modal 调用链") {
+  const events = flattenChain(input);
+  if (!events.length) {
+    return `<p class="muted">还没有计费记录。演练任务记 $0；真实生成会在这里挂上 <code>app.run</code> 和 <code>.remote</code>。</p>`;
+  }
+  const rows = events.map((event) => {
+    const depth = Number(event.depth || 0);
+    const prefix = depth ? `${"　".repeat(depth)}↳ ` : "";
+    const job = event.job_id
+      ? `<a href="#/job/${escapeHtml(event.job_id)}">${escapeHtml(event.job_id)}</a>`
+      : "—";
+    const parts = (event.breakdown_lines || []).map((line) => escapeHtml(line)).join("<br />");
+    return `<tr>
+      <td class="mono chain-name" style="padding-left:${0.4 + depth * 1.1}rem">${prefix}${escapeHtml(event.phase)}:${escapeHtml(event.name)}</td>
+      <td class="mono">${escapeHtml(String(event.duration_s ?? (event.duration_ms / 1000).toFixed(3)))}s</td>
+      <td class="mono">${escapeHtml(money(event.usd))}</td>
+      <td class="mono">${escapeHtml(money(event.usd_per_second))}/s</td>
+      <td class="mono breakdown">${parts || escapeHtml(event.line || "—")}</td>
+      <td>${escapeHtml(event.gpu || "—")}</td>
+      <td class="mono">${job}</td>
+      <td class="mono">${escapeHtml(event.image_id || "—")}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="table-wrap"><table class="cost-table">
+    <caption>${escapeHtml(caption)}</caption>
+    <thead><tr>
+      <th scope="col">调用链</th>
+      <th scope="col">时长</th>
+      <th scope="col">费用</th>
+      <th scope="col">每秒</th>
+      <th scope="col">拆分</th>
+      <th scope="col">GPU</th>
+      <th scope="col">任务</th>
+      <th scope="col">图片</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+function renderJobRollup(jobs) {
+  const rows = Object.values(jobs || {});
+  if (!rows.length) return "";
+  return `<div class="panel">
+    <table>
+      <caption>按任务汇总（session 与 remote 重叠时间只计一次）</caption>
+      <thead><tr>
+        <th scope="col">任务</th>
+        <th scope="col">费用</th>
+        <th scope="col">笔数</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map((job) => `
+          <tr>
+            <td class="mono"><a href="#/job/${escapeHtml(job.job_id)}">${escapeHtml(job.job_id)}</a></td>
+            <td class="mono">${escapeHtml(money(job.billed_usd))}</td>
+            <td>${escapeHtml(String(job.event_count))}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function costPage(params) {
+  const jobId = params.get("job") || "";
+  document.title = "成本 · sdcpp-modal";
+  main.innerHTML = `<p class="muted">读取账本…</p>`;
+  try {
+    const query = jobId ? `?job_id=${encodeURIComponent(jobId)}` : "";
+    const report = await api(`/api/cost${query}`);
+    const billed = report.billed || {};
+    main.innerHTML = `
+      <header class="page-head">
+        <h1>成本</h1>
+        <p class="lede">每一笔 Modal <code>app.run</code> / <code>.remote</code> 的调用链，按秒计价，挂到对应任务。重叠的 session 与 remote 只计一次。</p>
+      </header>
+      <div class="cost-hero panel">
+        <div>
+          <p class="run-kicker">已入账</p>
+          <p class="cost-total">${escapeHtml(billed.display || money(billed.usd || "0"))}</p>
+          <p class="muted">${escapeHtml(String(billed.event_count || 0))} 笔 · ${escapeHtml(String(billed.duration_s || 0))}s</p>
+        </div>
+        <div>
+          <p class="hint">费率来源 ${escapeHtml(report.rates?.source || "fallback")}。账本 <span class="mono">${escapeHtml(report.ledger_path || "")}</span></p>
+          ${jobId ? `<p class="hint">只看任务 <a href="#/job/${escapeHtml(jobId)}">${escapeHtml(jobId)}</a> · <a href="#/cost">全部</a></p>` : ""}
+        </div>
+      </div>
+      ${renderCostRates(report.rates)}
+      <div class="panel">
+        ${renderCostChain(report.traces, jobId ? `任务 ${jobId} 的调用链` : "全部调用链")}
+      </div>
+      ${jobId ? "" : renderJobRollup(report.jobs)}
+    `;
+  } catch (error) {
+    main.innerHTML = `<p class="bad">${escapeHtml(error.message)}</p>`;
+  }
+}
+
 function progressBox() {
   return `
     <div class="progress" id="progress">
@@ -384,7 +513,7 @@ async function jobsPage() {
   main.innerHTML = `
     <header class="page-head">
       <h1>任务</h1>
-      <p class="lede">每一次生成或批量都是一条任务。续跑会重试未完成的帧。</p>
+      <p class="lede">每一次生成或批量都是一条任务。费用来自挂在该任务上的 Modal 调用链。</p>
     </header>
     <div class="panel">
       <table>
@@ -396,6 +525,7 @@ async function jobsPage() {
             <th scope="col">图片</th>
             <th scope="col">配方</th>
             <th scope="col">显卡</th>
+            <th scope="col">费用</th>
             <th scope="col">操作</th>
           </tr>
         </thead>
@@ -407,11 +537,12 @@ async function jobsPage() {
               <td>${job.completed_images}/${job.total_images}</td>
               <td>${escapeHtml(job.recipe)}</td>
               <td>${escapeHtml(job.gpu)}</td>
+              <td class="mono"><a href="#/cost?job=${escapeHtml(job.id)}">${escapeHtml(jobCostLabel(job))}</a></td>
               <td>
                 <button type="button" class="ghost" data-gallery="${escapeHtml(job.id)}">画廊</button>
                 <button type="button" class="ghost" data-resume="${escapeHtml(job.id)}">续跑</button>
               </td>
-            </tr>`).join("") || `<tr><td colspan="6">还没有任务。先去生成一页。</td></tr>`}
+            </tr>`).join("") || `<tr><td colspan="7">还没有任务。先去生成一页。</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -447,10 +578,16 @@ async function jobDetailPage(jobId) {
       <div class="row"><span>状态</span><span class="pill ${escapeHtml(job.status)}">${STATUS[job.status] || escapeHtml(job.status)}</span></div>
       <div class="row"><span>配方 / 显卡</span><span>${escapeHtml(job.recipe)} · ${escapeHtml(job.gpu)}</span></div>
       <div class="row"><span>图片</span><span>${job.completed_images}/${job.total_images}</span></div>
+      <div class="row"><span>费用</span><span class="mono">${escapeHtml(jobCostLabel(job))} · ${escapeHtml(String(job.cost_events || 0))} 笔</span></div>
       <div class="actions" style="margin-block-start:1rem">
         <button type="button" class="ghost" id="to-gallery">查看画廊</button>
         <button type="button" class="ghost" id="to-jobs">全部任务</button>
+        <button type="button" class="ghost" id="to-cost">调用链</button>
       </div>
+    </div>
+    <h2 class="section">调用链</h2>
+    <div class="panel">
+      ${renderCostChain(job.cost_chain, "该任务的 Modal / 本地计费")}
     </div>
     <h2 class="section">帧</h2>
     <div class="panel">
@@ -463,6 +600,7 @@ async function jobDetailPage(jobId) {
             <th scope="col">种子</th>
             <th scope="col">尺寸</th>
             <th scope="col">耗时</th>
+            <th scope="col">费用</th>
           </tr>
         </thead>
         <tbody>
@@ -473,7 +611,8 @@ async function jobDetailPage(jobId) {
               <td class="mono">${escapeHtml(item.seed)}</td>
               <td>${item.width}×${item.height}</td>
               <td>${item.duration_ms != null ? (item.duration_ms / 1000).toFixed(2) + " 秒" : "—"}</td>
-            </tr>`).join("") || `<tr><td colspan="5">还没有帧。</td></tr>`}
+              <td class="mono">${item.cost_usd != null ? `${escapeHtml(money(item.cost_usd))}${item.usd_per_second ? ` · ${escapeHtml(money(item.usd_per_second))}/s` : ""}` : "—"}</td>
+            </tr>`).join("") || `<tr><td colspan="6">还没有帧。</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -483,6 +622,9 @@ async function jobDetailPage(jobId) {
   });
   document.getElementById("to-jobs").addEventListener("click", () => {
     location.hash = "#/jobs";
+  });
+  document.getElementById("to-cost").addEventListener("click", () => {
+    location.hash = `#/cost?job=${job.id}`;
   });
 }
 
@@ -611,6 +753,7 @@ async function settingsPage(meta) {
       <div class="row"><span>数据目录</span><span class="mono">${escapeHtml(meta.defaults.data_dir)}</span></div>
       <div class="row"><span>默认配方</span><span>${escapeHtml(meta.defaults.recipe)}</span></div>
       <div class="row"><span>默认显卡</span><span>${escapeHtml(meta.defaults.gpu)}</span></div>
+      <div class="row"><span>成本账本</span><span class="mono">${escapeHtml(meta.defaults.cost_log || "")}</span></div>
       <h2 class="section">配方</h2>
       ${(meta.models || []).map((model) => `
         <div class="row">
@@ -635,15 +778,19 @@ async function render(forced) {
   const page = forced || pageName || "generate";
   const params = new URLSearchParams(query || "");
   document.querySelectorAll("nav a").forEach((link) => {
-    const current = link.dataset.page === page || (page.startsWith("job/") && link.dataset.page === "jobs");
+    const current = link.dataset.page === page
+      || (page.startsWith("job/") && link.dataset.page === "jobs")
+      || (page === "cost" && link.dataset.page === "cost");
     if (current) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
+  main.classList.toggle("is-wide", page === "cost" || page.startsWith("job/"));
   if (!state.meta) state.meta = await api("/api/meta");
   if (page === "generate") generatePage(state.meta);
   else if (page === "batch") batchPage(state.meta);
   else if (page === "jobs") await jobsPage();
   else if (page.startsWith("job/")) await jobDetailPage(page.slice(4));
+  else if (page === "cost") await costPage(params);
   else if (page === "gallery") await galleryPage(params);
   else if (page === "settings") await settingsPage(state.meta);
   else generatePage(state.meta);

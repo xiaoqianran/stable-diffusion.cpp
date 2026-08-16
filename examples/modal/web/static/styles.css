@@ -144,6 +144,10 @@ main {
   max-width: var(--max);
 }
 
+main.is-wide {
+  max-width: 86rem;
+}
+
 .page-head {
   margin-bottom: 1.5rem;
 }
@@ -184,6 +188,61 @@ h1 {
 }
 
 .panel + .panel { margin-top: 0.9rem; }
+
+.cost-hero {
+  display: grid;
+  grid-template-columns: minmax(11rem, 16rem) 1fr;
+  gap: 1.1rem;
+  align-items: start;
+}
+
+.cost-total {
+  margin: 0.15rem 0 0.35rem;
+  font-size: clamp(1.8rem, 1.3rem + 1.6vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+
+.rate-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+.rate-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.55rem;
+  align-items: baseline;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-2);
+  font-size: 0.78rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.cost-table {
+  min-width: 52rem;
+}
+
+.cost-table th,
+.cost-table td {
+  font-size: 0.82rem;
+  vertical-align: top;
+}
+
+.cost-table .breakdown {
+  max-width: 22rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
 
 .prompt-block textarea {
   min-height: 12.5rem;
@@ -590,7 +649,8 @@ h2.section {
   }
   nav { flex-direction: row; flex-wrap: wrap; }
   .studio,
-  .lightbox-grid { grid-template-columns: minmax(0, 1fr); }
+  .lightbox-grid,
+  .cost-hero { grid-template-columns: minmax(0, 1fr); }
   .choice {
     grid-template-columns: 1.1rem minmax(0, 1fr);
   }

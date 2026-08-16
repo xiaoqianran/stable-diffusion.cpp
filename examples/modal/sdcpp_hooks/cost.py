@@ -30,6 +30,7 @@ FALLBACK_RATES: dict[str, str] = {
 DEFAULT_CPU_CORES = 0.125
 DEFAULT_MEMORY_GIB = 1.0
 USD_QUANT = Decimal("0.000001")
+PER_SEC_QUANT = Decimal("0.000000001")
 
 GPU_ALIASES = {
     "A10": "A10G",
@@ -58,6 +59,11 @@ def _dec(value: Any) -> Decimal:
 def format_usd(value: Decimal | float | str) -> str:
     quantized = _dec(value).quantize(USD_QUANT, rounding=ROUND_HALF_UP)
     return f"${quantized}"
+
+
+def format_per_second(value: Decimal | float | str) -> str:
+    quantized = _dec(value).quantize(PER_SEC_QUANT, rounding=ROUND_HALF_UP)
+    return f"${quantized}/s"
 
 
 def gpu_rate_key(gpu: str) -> str:
@@ -92,6 +98,12 @@ class CostEvent:
     trace_id: str = ""
     notes: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    job_id: str = ""
+    image_id: str = ""
+    recipe: str = ""
+    parent_id: str = ""
+    usd_per_second: str = "0"
+    rates: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -101,6 +113,12 @@ class CostEvent:
         known = {key: data[key] for key in cls.__dataclass_fields__ if key in data}
         known.setdefault("breakdown", {})
         known.setdefault("extra", {})
+        known.setdefault("rates", {})
+        extra = known.get("extra") or {}
+        if isinstance(extra, Mapping):
+            for key in ("job_id", "image_id", "recipe", "parent_id"):
+                if not known.get(key) and extra.get(key):
+                    known[key] = extra[key]
         return cls(**known)
 
 
@@ -138,6 +156,9 @@ class PriceBook:
         total = sum(breakdown.values(), Decimal("0"))
         return total, breakdown
 
+    def per_second(self, plan: ResourcePlan) -> tuple[Decimal, dict[str, Decimal]]:
+        return self.estimate(plan, 1.0)
+
     def estimate_volume_month(self, bytes_used: int) -> Decimal:
         gib = _dec(max(bytes_used, 0)) / Decimal(1024**3)
         return self.volume_month() * gib
@@ -145,6 +166,10 @@ class PriceBook:
 
 def default_plan(name: str, *, gpu: str | None = None, notes: str = "") -> ResourcePlan:
     return ResourcePlan(name=name, gpu=gpu or None, notes=notes)
+
+
+def _q(value: Decimal, quant: Decimal) -> str:
+    return str(value.quantize(quant, rounding=ROUND_HALF_UP))
 
 
 def make_event(
@@ -157,23 +182,39 @@ def make_event(
     trace_id: str = "",
     started_at: str | None = None,
     extra: dict[str, Any] | None = None,
+    job_id: str = "",
+    image_id: str = "",
+    recipe: str = "",
+    parent_id: str = "",
 ) -> CostEvent:
+    extra = dict(extra or {})
+    job_id = job_id or str(extra.get("job_id") or "")
+    image_id = image_id or str(extra.get("image_id") or "")
+    recipe = recipe or str(extra.get("recipe") or "")
+    parent_id = parent_id or str(extra.get("parent_id") or "")
     total, breakdown = book.estimate(plan, duration_ms / 1000.0)
+    per_s, per_s_parts = book.per_second(plan)
     return CostEvent(
         id=event_id,
         name=plan.name,
         phase=phase,
         started_at=started_at or utc_now_iso(),
         duration_ms=max(duration_ms, 0),
-        usd=str(total.quantize(USD_QUANT, rounding=ROUND_HALF_UP)),
-        breakdown={key: str(value.quantize(USD_QUANT, rounding=ROUND_HALF_UP)) for key, value in breakdown.items()},
+        usd=_q(total, USD_QUANT),
+        breakdown={key: _q(value, USD_QUANT) for key, value in breakdown.items()},
         gpu=plan.gpu,
         cpu_cores=plan.cpu_cores,
         memory_gib=plan.memory_gib,
         rates_source=book.source,
         trace_id=trace_id,
         notes=plan.notes,
-        extra=extra or {},
+        extra=extra,
+        job_id=job_id,
+        image_id=image_id,
+        recipe=recipe,
+        parent_id=parent_id,
+        usd_per_second=_q(per_s, PER_SEC_QUANT),
+        rates={key: _q(value, PER_SEC_QUANT) for key, value in per_s_parts.items()},
     )
 
 
@@ -206,11 +247,17 @@ def billed_usd(events: Iterable[CostEvent]) -> Decimal:
 
 def format_event(event: CostEvent) -> str:
     seconds = event.duration_ms / 1000.0
-    parts = [f"cost {event.phase}:{event.name} {seconds:.2f}s {format_usd(event.usd)}"]
+    parts = [f"cost {event.phase}:{event.name} {seconds:.3f}s {format_usd(event.usd)}"]
+    if event.usd_per_second and event.usd_per_second != "0":
+        parts.append(format_per_second(event.usd_per_second))
     if event.gpu:
         parts.append(f"gpu {event.gpu}")
     parts.append(f"cpu {event.cpu_cores:g}")
     parts.append(f"mem {event.memory_gib:g}GiB")
+    if event.job_id:
+        parts.append(f"job {event.job_id}")
+    if event.image_id:
+        parts.append(f"img {event.image_id}")
     if event.rates_source:
         parts.append(event.rates_source)
     return " · ".join(parts)

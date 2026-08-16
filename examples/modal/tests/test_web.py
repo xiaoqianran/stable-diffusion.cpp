@@ -82,6 +82,10 @@ def test_dry_run_job_writes_a_png(tmp_path):
     detail = service.get_job_detail(job["id"])
     assert detail["job"]["status"] == "completed"
     assert detail["job"]["completed_images"] == 2
+    assert detail["job"]["cost_usd"] == "0"
+    assert detail["job"]["cost_events"] >= 1
+    assert detail["job"]["cost_chain"][0]["phase"] == "local"
+    assert detail["job"]["cost_chain"][0]["job_id"] == job["id"]
     assert all(item["status"] == "completed" for item in detail["images"])
     gallery = service.list_images(job_id=job["id"])
     assert gallery["total"] == 2
@@ -137,3 +141,18 @@ def test_fastapi_create_job_dry_run(tmp_path):
     assert "sdcpp-modal" in home.text
     assert 'lang="zh-CN"' in home.text
     assert "七方工作台" in home.text
+    assert "成本" in home.text
+    assert meta["defaults"]["cost_log"]
+    cost = client.get("/api/cost").json()
+    assert "traces" in cost
+    assert "billed" in cost
+    assert "cards" in cost["rates"]
+    assert any(card["id"] == "RTX-PRO-6000" for card in cost["rates"]["cards"])
+    filtered = client.get(f"/api/cost?job_id={job_id}").json()
+    assert filtered["job_id"] == job_id
+    assert filtered["event_count"] >= 1
+    assert filtered["billed"]["usd"] == "0"
+    listed = client.get("/api/jobs").json()
+    match = next(item for item in listed if item["id"] == job_id)
+    assert match["cost_usd"] == "0"
+    assert match["cost_events"] >= 1
