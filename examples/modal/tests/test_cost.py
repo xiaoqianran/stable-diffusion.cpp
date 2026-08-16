@@ -12,6 +12,13 @@ from sdcpp_hooks.cost import (
 from sdcpp_hooks.meter import ContainerMeter, Ledger, client_ledger, last_event, span
 
 
+def test_default_gpu_is_l40s(monkeypatch):
+    monkeypatch.delenv("SDCPP_GPU", raising=False)
+    from sdcpp_hooks.modal_meter import _gpu_name
+
+    assert _gpu_name() == "L40S"
+
+
 def test_gpu_rate_key_normalizes_aliases():
     assert gpu_rate_key("L4") == "gpu_hour_cost_l4"
     assert gpu_rate_key("L40S") == "gpu_hour_cost_l40s"

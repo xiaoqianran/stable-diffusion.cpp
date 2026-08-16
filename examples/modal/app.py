@@ -32,7 +32,7 @@ IMAGE_TAG = os.environ.get(
     "ghcr.io/leejet/stable-diffusion.cpp:master-cuda",
 )
 def _gpu_name() -> str:
-    raw = os.environ.get("SDCPP_GPU", "L4")
+    raw = os.environ.get("SDCPP_GPU", "L40S")
     text = raw.strip().upper().replace(" ", "-")
     aliases = {
         "RTX-PRO-6000": "RTX6000",

@@ -32,7 +32,7 @@ from .meter import (
 
 
 def _gpu_name() -> str:
-    return os.environ.get("SDCPP_GPU", "L4")
+    return os.environ.get("SDCPP_GPU", "L40S")
 
 
 def plan_for(name: str, *, gpu: bool = False, notes: str = "") -> ResourcePlan:
