@@ -60,7 +60,7 @@ RECIPES: dict[str, dict[str, Any]] = {
             "hf://unsloth/Qwen3-4B-Instruct-2507-GGUF/"
             "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
         ),
-        "width": 512,
+        "width": 1024,
         "height": 1024,
         "steps": 8,
         "cfg_scale": 1.0,

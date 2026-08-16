@@ -159,6 +159,24 @@ def test_parse_generate_accepts_the_seven_bundled_recipes():
         assert payload["steps"]
 
 
+def test_recipe_defaults_use_official_sizes():
+    from sdcpp_hooks.recipes import RECIPES
+
+    official = {
+        "ideogram4": (1024, 1024),
+        "flux2-klein": (1024, 1024),
+        "flux2-dev": (1024, 1024),
+        "z-image-turbo": (1024, 1024),
+        "sdxl-turbo": (512, 512),
+        "sd2": (512, 512),
+        "sd15": (512, 512),
+    }
+    assert set(RECIPES) == set(official)
+    for name, (width, height) in official.items():
+        assert RECIPES[name]["width"] == width
+        assert RECIPES[name]["height"] == height
+
+
 def test_parse_pull_all_dedupes_shared_vae():
     command = parse_argv(["pull", "--all"])
 
