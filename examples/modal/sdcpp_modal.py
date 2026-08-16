@@ -24,6 +24,7 @@ from sdcpp_hooks.gpu import default_gpu_for_recipe, normalize_gpu
 from sdcpp_hooks.hardware import format_host_summary
 from sdcpp_hooks.hf_dataset import publish_image, trigger_pages_rebuild
 from sdcpp_hooks.modal_meter import billed_app, billed_remote, cost_command, print_last_cost
+from sdcpp_hooks.recipes import recipe_volume_status
 
 
 MAX_PUT_BYTES = 64 * 1024 * 1024
@@ -34,6 +35,16 @@ def _runtime_gpu(recipe: str) -> str:
     if raw:
         return normalize_gpu(raw)
     return default_gpu_for_recipe(recipe)
+
+
+def _print_prefetch_status(rows: list[dict]) -> None:
+    paths = {str(row.get("path") or "") for row in rows}
+    print("volume sdcpp-models")
+    for item in recipe_volume_status(paths):
+        mark = "complete" if item["complete"] else "missing"
+        print(f"{item['recipe']}\t{mark}\t{item['have']}/{item['need']}")
+        for uri in item["missing"]:
+            print(f"  missing {uri}")
 
 
 def _print_storage(rows: list[dict]) -> None:
@@ -71,11 +82,15 @@ def main(argv: list[str] | None = None) -> int:
     if command.action == "web":
         return _run_web(command)
 
-    if command.action in {"pull", "ls", "put"}:
+    if command.action in {"pull", "prefetch", "ls", "put"}:
         with billed_app(storage_app, "storage"):
-            if command.action == "pull":
-                for row in billed_remote(pull, command.uris, name="pull"):
-                    print(f"{row['uri']} -> {row['path']} ({row['bytes']} bytes)")
+            if command.action in {"pull", "prefetch"}:
+                if command.status:
+                    _print_prefetch_status(billed_remote(list_storage, name="ls"))
+                else:
+                    print(f"cpu prefetch {len(command.uris)} file(s) onto volume sdcpp-models")
+                    for row in billed_remote(pull, command.uris, name="prefetch"):
+                        print(f"{row['uri']} -> {row['path']} ({row['bytes']} bytes)")
             elif command.action == "put":
                 try:
                     files = _put_payload(command.files)

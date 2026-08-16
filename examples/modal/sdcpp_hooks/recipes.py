@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from .contract import GenerateRequest
 
+
+DEFAULT_RECIPE = "z-image-turbo"
 
 RECIPES: dict[str, dict[str, Any]] = {
     "ideogram4": {
@@ -132,6 +135,36 @@ def all_recipe_uris() -> list[str]:
                 seen.add(uri)
                 uris.append(uri)
     return uris
+
+
+def prefetch_uris(*, recipe: str = "", all_recipes: bool = False) -> list[str]:
+    if all_recipes:
+        return all_recipe_uris()
+    return recipe_uris(recipe or DEFAULT_RECIPE)
+
+
+def volume_relpath(uri: str) -> str:
+    from .artifacts import ArtifactRef
+
+    dest = ArtifactRef.parse(uri).cache_path(Path("__volume__"))
+    return dest.relative_to("__volume__").as_posix()
+
+
+def recipe_volume_status(volume_paths: set[str]) -> list[dict[str, Any]]:
+    rows = []
+    for name in RECIPES:
+        uris = recipe_uris(name)
+        missing = [uri for uri in uris if volume_relpath(uri) not in volume_paths]
+        rows.append(
+            {
+                "recipe": name,
+                "complete": not missing,
+                "have": len(uris) - len(missing),
+                "need": len(uris),
+                "missing": missing,
+            }
+        )
+    return rows
 
 
 def apply_recipe(name: str, **overrides: Any) -> GenerateRequest:

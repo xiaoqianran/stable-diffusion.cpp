@@ -5,8 +5,10 @@ cd examples/modal
 uv sync
 uv run modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
 
-uv run python sdcpp_modal.py pull --all
-uv run python sdcpp_modal.py ls
+uv run python sdcpp_modal.py prefetch
+uv run python sdcpp_modal.py prefetch z-image-turbo
+uv run python sdcpp_modal.py prefetch --all
+uv run python sdcpp_modal.py prefetch --status
 uv run python sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turbo -o zimage.png
 uv run python sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
 uv run python sdcpp_modal.py web
@@ -50,6 +52,8 @@ Do not put tokens in git.
 ## CLI
 
 ```bash
+python3 sdcpp_modal.py prefetch --all
+python3 sdcpp_modal.py prefetch --status
 python3 sdcpp_modal.py pull --all
 python3 sdcpp_modal.py ls
 python3 sdcpp_modal.py probe
@@ -62,7 +66,8 @@ python3 sdcpp_modal.py cost --official
 
 | Command | Where it runs | What it does |
 | --- | --- | --- |
-| `pull` | CPU | download URIs, a `--recipe`, or `--all` recipes onto volume `sdcpp-models` |
+| `prefetch` | CPU | download a recipe (default `z-image-turbo`), `--all`, or `--status` onto volume `sdcpp-models` |
+| `pull` | CPU | same downloads by raw URI, `--recipe`, or `--all` |
 | `put` | CPU | upload a small local file (init image, mask) to `uploads/` |
 | `ls` | CPU | list files already on that volume |
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
@@ -70,6 +75,8 @@ python3 sdcpp_modal.py cost --official
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 | `web` | local FastAPI | 生成 / 批量 / 任务 / 成本 / 画廊 workbench on `:7860` |
 | `cost` | local (+ optional Modal API) | print the call-chain ledger (see [成本教程](#成本教程)) |
+
+`prefetch` is the CPU path that writes recipe weights onto volume `sdcpp-models`. No GPU is used. Omit the recipe name to prefetch `z-image-turbo`. `--all` fetches every bundled recipe. `--status` lists which recipe files are already on the volume. `pull` is the same download with raw URIs. `generate` also calls this CPU ensure step for any missing files before the GPU run.
 
 `generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
 

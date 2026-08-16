@@ -749,7 +749,7 @@ async function settingsPage(meta) {
   main.innerHTML = `
     <header class="page-head">
       <h1>设置</h1>
-      <p class="lede">本地工作台。权重留在卷 <code>sdcpp-models</code>。Ideogram 4 与 FLUX.2 Dev 默认 <code>RTX-PRO-6000</code>，其余默认 L40S。A10 与 A100 已禁用。</p>
+      <p class="lede">本地工作台。权重留在卷 <code>sdcpp-models</code>。用 <code>uv run python sdcpp_modal.py prefetch --all</code> 在 CPU 上预取七个配方。Ideogram 4 与 FLUX.2 Dev 默认 <code>RTX-PRO-6000</code>，其余默认 L40S。A10 与 A100 已禁用。</p>
     </header>
     <div class="panel">
       <div class="row"><span>数据目录</span><span class="mono">${escapeHtml(meta.defaults.data_dir)}</span></div>
