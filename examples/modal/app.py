@@ -23,7 +23,7 @@ from sdcpp_hooks.hardware import collect_run_environment
 from sdcpp_hooks.hooks import generate, use_engine, use_models
 from sdcpp_hooks.meter import ContainerMeter
 from sdcpp_hooks.probe import probe_cli_help
-from sdcpp_hooks.runner import run_cli
+from sdcpp_hooks.runner import EngineError, run_cli
 
 
 HERE = Path(__file__).resolve().parent
@@ -251,13 +251,16 @@ class SDEngine:
         volume.reload()
         models = use_models(request, cache_dir=MODEL_ROOT, allow_download=False)
         output_path = Path("/tmp/sdcpp-output.png")
-        result = generate(
-            request,
-            engine=self.engine,
-            models=models,
-            run=run_cli,
-            output_path=output_path,
-        )
+        try:
+            result = generate(
+                request,
+                engine=self.engine,
+                models=models,
+                run=run_cli,
+                output_path=output_path,
+            )
+        except EngineError as exc:
+            raise RuntimeError(str(exc)) from None
         host = dict(result.host or collect_run_environment(
             help_text=self.engine.raw_help,
             binary=self.binary,
