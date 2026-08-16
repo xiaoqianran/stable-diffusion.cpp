@@ -14,6 +14,8 @@ from sdcpp_hooks.meter import ContainerMeter, Ledger, client_ledger, last_event,
 
 def test_gpu_rate_key_normalizes_aliases():
     assert gpu_rate_key("L4") == "gpu_hour_cost_l4"
+    assert gpu_rate_key("L40S") == "gpu_hour_cost_l40s"
+    assert gpu_rate_key("RTX-PRO-6000") == "gpu_hour_cost_rtx6000"
     assert gpu_rate_key("A10") == "gpu_hour_cost_a10g"
     assert gpu_rate_key("A100-80GB") == "gpu_hour_cost_a100_80gb"
 

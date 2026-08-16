@@ -31,7 +31,24 @@ IMAGE_TAG = os.environ.get(
     "SDCPP_IMAGE",
     "ghcr.io/leejet/stable-diffusion.cpp:master-cuda",
 )
-GPU = os.environ.get("SDCPP_GPU", "L4")
+def _gpu_name() -> str:
+    raw = os.environ.get("SDCPP_GPU", "L4")
+    text = raw.strip().upper().replace(" ", "-")
+    aliases = {
+        "RTX-PRO-6000": "RTX6000",
+        "RTXPRO6000": "RTX6000",
+        "PRO-6000": "RTX6000",
+        "PRO6000": "RTX6000",
+    }
+    gpu = aliases.get(text, text)
+    if gpu.startswith("A10") or gpu.startswith("A100"):
+        raise RuntimeError(
+            f"SDCPP_GPU={raw!r} is blocked; use L4, L40S, or RTX6000 (RTX PRO 6000)"
+        )
+    return gpu
+
+
+GPU = _gpu_name()
 MODEL_ROOT = Path(os.environ.get("SDCPP_MODEL_ROOT", "/models"))
 IDLE_SECONDS = int(os.environ.get("SDCPP_IDLE_SECONDS", "10"))
 
