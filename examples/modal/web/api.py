@@ -104,7 +104,7 @@ def meta() -> dict[str, Any]:
             "model": default_recipe(),
             "recipe": default_recipe(),
             "gpu": DEFAULT_GPU,
-            "port": 7860,
+            "port": 7863,
             "data_dir": str(_DATA_DIR),
             "cost_log": str(client_ledger_path()),
         },
