@@ -24,8 +24,8 @@ RECIPE_CARDS: list[dict[str, Any]] = [
         "label": "Z-Image Turbo",
         "label_zh": "Z-Image Turbo",
         "elo": 1131,
-        "hint": "Photoreal and text. Official size is 512×1024, 8 steps.",
-        "hint_zh": "写实与文字。官方尺寸 512×1024，8 步。",
+        "hint": "Photoreal and text. Official size is 1024×1024, 8 steps.",
+        "hint_zh": "写实与文字。官方尺寸 1024×1024，8 步。",
     },
     {
         "id": "ideogram4",
