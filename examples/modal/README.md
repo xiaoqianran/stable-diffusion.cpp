@@ -43,7 +43,6 @@ python3 sdcpp_modal.py cost --official
 | `put` | CPU | upload a small local file (init image, mask) to `uploads/` |
 | `ls` | CPU | list files already on that volume |
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
-| `convert` | optional CPU fallback | only if a prebuilt GGUF is missing; prefer `pull --recipe ideogram4` |
 | `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 | `cost` | local (+ optional Modal API) | print the local billed-session ledger |
@@ -54,9 +53,12 @@ CPU pulls use `aria2c` (`-x 16 -s 16 -c -k 1M`) when it is on the image, then th
 
 ```bash
 python3 sdcpp_modal.py pull --recipe ideogram4
-python3 sdcpp_modal.py pull --recipe ideogram4
 python3 sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
 ```
+
+Do not convert Ideogram4 weights yourself. `pull --recipe ideogram4` downloads the prebuilt GGUF pair from [`leejet/ideogram-4-GGUF`](https://huggingface.co/leejet/ideogram-4-GGUF) (`ideogram4-Q4_0.gguf` and `ideogram4_uncond-Q4_0.gguf`), plus the FLUX.2 VAE and Qwen3-VL GGUF. There is no `convert` command in this CLI. The FLUX.2 VAE is gated, so set `HF_TOKEN`.
+
+The default GPU is `L40S`. A 24 GB `L4` can OOM on the diffusion compute buffer. `RTX6000` also works; A10 and A100 are blocked.
 
 Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
 
@@ -126,11 +128,9 @@ dataset and deploys a paginated gallery to GitHub Pages (12 images per page,
 filters for current and future model families):
 https://xiaoqianran.github.io/stable-diffusion.cpp/
 
-Ideogram4 fp8 weights expand to F16 on GPU. The default `L40S` has enough VRAM. A 24 GB `L4` can OOM on the diffusion compute buffer; `RTX6000` also works.
-
 ## Limits
 
-- First-class path is `img_gen`. Ideogram4 `convert` is wrapped. `vid_gen`, `adetailer`, and `metadata` are not; some of their flags can still be forwarded if the remote binary accepts them.
+- First-class path is `img_gen`. `vid_gen`, `adetailer`, `convert`, and `metadata` are not wrapped; some of their flags can still be forwarded if the remote binary accepts them.
 - `put` is for small files (64 MiB). Weights should use `pull` or `modal volume put`.
 - Size defaults match local `sd-cli` (512x512, 20 steps, cfg 7.0) unless you override them or use a recipe.
 
