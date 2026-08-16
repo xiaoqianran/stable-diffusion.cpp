@@ -23,6 +23,7 @@ class GenerateRequest:
     strength: float | None = None
     model: str | None = None
     diffusion_model: str | None = None
+    uncond_diffusion_model: str | None = None
     vae: str | None = None
     clip_l: str | None = None
     clip_g: str | None = None

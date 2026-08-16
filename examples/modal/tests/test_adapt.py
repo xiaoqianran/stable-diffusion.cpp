@@ -45,6 +45,26 @@ def test_adapt_request_maps_control_net_and_taesd(current_help_text):
     assert planned.argv[planned.argv.index("--taesd") + 1] == "/models/tae.safetensors"
 
 
+def test_adapt_request_maps_uncond_diffusion_model(current_help_text):
+    engine = discover_engine(current_help_text, binary="/sd-cli")
+    request = GenerateRequest(
+        prompt="a cat",
+        diffusion_model="/models/cond.safetensors",
+        uncond_diffusion_model="/models/uncond.safetensors",
+        llm="/models/llm.gguf",
+        vae="/models/ae.safetensors",
+        extra_cli={"--diffusion-fa": True, "--offload-to-cpu": True},
+    )
+
+    planned = adapt_request(request, engine, output_path="/tmp/out.png")
+
+    assert planned.argv[planned.argv.index("--diffusion-model") + 1] == "/models/cond.safetensors"
+    assert planned.argv[planned.argv.index("--uncond-diffusion-model") + 1] == "/models/uncond.safetensors"
+    assert planned.argv[planned.argv.index("--llm") + 1] == "/models/llm.gguf"
+    assert "--diffusion-fa" in planned.argv
+    assert "--offload-to-cpu" in planned.argv
+
+
 def test_adapt_request_uses_aliases_when_upstream_renames_common_flags(renamed_help_text):
     engine = discover_engine(renamed_help_text, binary="/sd-cli")
     request = GenerateRequest(

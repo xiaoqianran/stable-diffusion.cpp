@@ -43,11 +43,18 @@ python3 sdcpp_modal.py cost --official
 | `put` | CPU | upload a small local file (init image, mask) to `uploads/` |
 | `ls` | CPU | list files already on that volume |
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
-| `generate` | CPU, then GPU (`SDCPP_GPU`, default `L4`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
+| `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 | `cost` | local (+ optional Modal API) | print the local billed-session ledger |
 
 `generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
+
+CPU pulls use `aria2c` (`-x 16 -s 16 -c -k 1M`) when it is on the image, then the Hugging Face CLI, then urllib. Several missing files download in parallel (`SDCPP_PULL_WORKERS`, default 4). Tokens stay in headers or `CIVITAI_TOKEN` query params and are redacted in logs.
+
+```bash
+python3 sdcpp_modal.py pull --recipe ideogram4
+python3 sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
+```
 
 Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
 
@@ -85,9 +92,10 @@ Then pass `--model /models/hf/local/v1-5-pruned-emaonly.safetensors`.
 | Variable | Default |
 | --- | --- |
 | `SDCPP_IMAGE` | `ghcr.io/leejet/stable-diffusion.cpp:master-cuda` |
-| `SDCPP_GPU` | `L4` |
+| `SDCPP_GPU` | `L40S` (also `L4` or `RTX6000` / RTX PRO 6000; A10 and A100 are blocked) |
 | `SDCPP_IDLE_SECONDS` | `10` (CPU and GPU scale to zero after this idle window) |
 | `SDCPP_SECRET` | `sdcpp-tokens` (used only if that Modal secret exists) |
+| `SDCPP_PULL_WORKERS` | `4` (parallel CPU downloads) |
 | `HF_ENDPOINT` | `https://huggingface.co` |
 | `SDCPP_GALLERY_DATASET` | `seachen/stable-diffusion-cpp-gallery` |
 | `SDCPP_GITHUB_REPO` | `xiaoqianran/stable-diffusion.cpp` |
@@ -115,6 +123,8 @@ GitHub Actions workflow `.github/workflows/gallery-pages.yml` downloads that
 dataset and deploys a paginated gallery to GitHub Pages (12 images per page,
 filters for current and future model families):
 https://xiaoqianran.github.io/stable-diffusion.cpp/
+
+Ideogram4 fp8 weights expand to F16 on GPU. The default `L40S` has enough VRAM. A 24 GB `L4` can OOM on the diffusion compute buffer; `RTX6000` also works.
 
 ## Limits
 

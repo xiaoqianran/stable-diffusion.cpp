@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+
+from .fast_fetch import fast_fetch
 
 
 ARTIFACT_FIELDS = {
     "model",
     "diffusion_model",
+    "uncond_diffusion_model",
     "vae",
     "clip_l",
     "clip_g",
@@ -89,8 +92,15 @@ class ArtifactRef:
 
     def cache_path(self, cache_dir: Path) -> Path:
         if self.scheme == "hf":
-            filename = Path(self.path or "model.bin").name
-            return cache_dir.joinpath("hf", *self.repo_id.split("/"), self.revision or "main", filename)
+            rel = Path(self.path or "model.bin")
+            if rel.is_absolute() or ".." in rel.parts:
+                raise ValueError(f"unsafe hf path {self.path!r}")
+            return cache_dir.joinpath(
+                "hf",
+                *self.repo_id.split("/"),
+                self.revision or "main",
+                *rel.parts,
+            )
         if self.scheme == "civitai":
             return cache_dir / "civitai" / str(self.version_id) / "model.bin"
         if self.scheme in {"http", "https"} and self.url:
@@ -145,15 +155,13 @@ def default_token_for_url(url: str) -> str | None:
 
 
 def default_fetch(url: str, dest: Path, headers: Mapping[str, str]) -> Path:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    request = Request(url, headers=dict(headers))
-    with urlopen(request) as response, dest.open("wb") as handle:
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            handle.write(chunk)
-    return dest
+    return fast_fetch(url, dest, headers)
+
+
+def cache_is_complete(dest: Path) -> bool:
+    if not dest.exists() or dest.stat().st_size <= 0:
+        return False
+    return not dest.with_name(dest.name + ".aria2").exists()
 
 
 def resolve_artifacts(
@@ -164,12 +172,14 @@ def resolve_artifacts(
     hf_endpoint: str | None = None,
     artifact_fields: Iterable[str] = ARTIFACT_FIELDS,
     allow_download: bool = True,
+    max_workers: int = 1,
 ) -> dict[str, Path]:
     cache_dir = Path(cache_dir)
     fetch = fetch or default_fetch
     token_for_url = token_for_url or default_token_for_url
     endpoint = hf_endpoint or os.environ.get("HF_ENDPOINT", "https://huggingface.co")
     resolved: dict[str, Path] = {}
+    pending: list[tuple[str, Path, str, dict[str, str]]] = []
 
     for key, raw in values.items():
         if key not in artifact_fields or raw in (None, ""):
@@ -180,7 +190,7 @@ def resolve_artifacts(
             continue
 
         dest = ref.cache_path(cache_dir)
-        if dest.exists() and dest.stat().st_size > 0:
+        if cache_is_complete(dest):
             resolved[key] = dest
             continue
 
@@ -194,7 +204,22 @@ def resolve_artifacts(
         token = token_for_url(url)
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        resolved[key] = fetch(url, dest, headers)
+        pending.append((key, dest, url, headers))
+
+    def _download(item: tuple[str, Path, str, dict[str, str]]) -> tuple[str, Path]:
+        key, dest, url, headers = item
+        return key, fetch(url, dest, headers)
+
+    if pending:
+        workers = max(1, int(max_workers))
+        if workers == 1 or len(pending) == 1:
+            for item in pending:
+                key, path = _download(item)
+                resolved[key] = path
+        else:
+            with ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
+                for key, path in pool.map(_download, pending):
+                    resolved[key] = path
 
     return resolved
 

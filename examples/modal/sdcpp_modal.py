@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from app import (
+    GPU,
     SDEngine,
     ensure_artifacts,
     gpu_app,
@@ -102,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         print_last_cost()
     print_last_cost()
 
+    print(f"gpu {GPU}")
     with billed_app(gpu_app, "gpu"):
         result = billed_remote(SDEngine().generate, payload, name="generate", gpu=True)
         print_last_cost()

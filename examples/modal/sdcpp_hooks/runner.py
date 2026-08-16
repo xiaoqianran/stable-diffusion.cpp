@@ -30,6 +30,10 @@ def run_cli(argv: list[str], workdir: Path) -> list[Path]:
         text=True,
         check=False,
     )
+    if completed.stdout:
+        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n", flush=True)
+    if completed.stderr:
+        print(completed.stderr, end="" if completed.stderr.endswith("\n") else "\n", flush=True)
     if completed.returncode != 0:
         raise EngineError(argv, completed.returncode, completed.stdout, completed.stderr)
 

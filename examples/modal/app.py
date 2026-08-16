@@ -23,7 +23,7 @@ from sdcpp_hooks.hardware import collect_run_environment
 from sdcpp_hooks.hooks import generate, use_engine, use_models
 from sdcpp_hooks.meter import ContainerMeter
 from sdcpp_hooks.probe import probe_cli_help
-from sdcpp_hooks.runner import run_cli
+from sdcpp_hooks.runner import EngineError, run_cli
 
 
 HERE = Path(__file__).resolve().parent
@@ -31,7 +31,24 @@ IMAGE_TAG = os.environ.get(
     "SDCPP_IMAGE",
     "ghcr.io/leejet/stable-diffusion.cpp:master-cuda",
 )
-GPU = os.environ.get("SDCPP_GPU", "L4")
+def _gpu_name() -> str:
+    raw = os.environ.get("SDCPP_GPU", "L40S")
+    text = raw.strip().upper().replace(" ", "-")
+    aliases = {
+        "RTX-PRO-6000": "RTX6000",
+        "RTXPRO6000": "RTX6000",
+        "PRO-6000": "RTX6000",
+        "PRO6000": "RTX6000",
+    }
+    gpu = aliases.get(text, text)
+    if gpu.startswith("A10") or gpu.startswith("A100"):
+        raise RuntimeError(
+            f"SDCPP_GPU={raw!r} is blocked; use L4, L40S, or RTX6000 (RTX PRO 6000)"
+        )
+    return gpu
+
+
+GPU = _gpu_name()
 MODEL_ROOT = Path(os.environ.get("SDCPP_MODEL_ROOT", "/models"))
 IDLE_SECONDS = int(os.environ.get("SDCPP_IDLE_SECONDS", "10"))
 
@@ -63,7 +80,11 @@ def _with_hooks(image: modal.Image) -> modal.Image:
 
 
 def _cpu_image() -> modal.Image:
-    return _with_hooks(modal.Image.debian_slim(python_version="3.12"))
+    return _with_hooks(
+        modal.Image.debian_slim(python_version="3.12")
+        .apt_install("aria2")
+        .pip_install("huggingface_hub")
+    )
 
 
 def _cuda_image() -> modal.Image:
@@ -96,6 +117,14 @@ def _idle_kwargs() -> dict:
     }
 
 
+def _pull_workers() -> int:
+    raw = os.environ.get("SDCPP_PULL_WORKERS", "4")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 4
+
+
 def _pull_uris(uris: list[str]) -> list[dict]:
     labeled = {f"uri_{index}": uri for index, uri in enumerate(uris)}
     resolved = resolve_artifacts(
@@ -103,6 +132,7 @@ def _pull_uris(uris: list[str]) -> list[dict]:
         cache_dir=MODEL_ROOT,
         artifact_fields=set(labeled),
         allow_download=True,
+        max_workers=_pull_workers(),
     )
     rows = []
     for index, uri in enumerate(uris):
@@ -196,7 +226,7 @@ def probe() -> dict:
 
 @gpu_app.cls(
     gpu=GPU,
-    timeout=60 * 60,
+    timeout=2 * 60 * 60,
     volumes={str(MODEL_ROOT): volume},
     **_idle_kwargs(),
 )
@@ -221,13 +251,16 @@ class SDEngine:
         volume.reload()
         models = use_models(request, cache_dir=MODEL_ROOT, allow_download=False)
         output_path = Path("/tmp/sdcpp-output.png")
-        result = generate(
-            request,
-            engine=self.engine,
-            models=models,
-            run=run_cli,
-            output_path=output_path,
-        )
+        try:
+            result = generate(
+                request,
+                engine=self.engine,
+                models=models,
+                run=run_cli,
+                output_path=output_path,
+            )
+        except EngineError as exc:
+            raise RuntimeError(str(exc)) from None
         host = dict(result.host or collect_run_environment(
             help_text=self.engine.raw_help,
             binary=self.binary,
