@@ -3,13 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from .cost import FALLBACK_RATES, GPU_ALIASES
+from .gpu import PRO6000, default_gpu_for_recipe, normalize_gpu
 from .recipes import RECIPES, recipe_uris
 
 
 ALLOWED_GPUS = (
-    {"id": "L40S", "vram_gb": 48, "notes": "default; needed for Ideogram4 / FLUX.2"},
-    {"id": "L4", "vram_gb": 24, "notes": "can OOM on large diffusion buffers"},
-    {"id": "RTX6000", "vram_gb": 48, "notes": "RTX PRO 6000"},
+    {"id": "L40S", "label": "L40S", "vram_gb": 48, "notes": "多数配方的默认卡"},
+    {"id": "L4", "label": "L4", "vram_gb": 24, "notes": "大扩散缓冲可能 OOM"},
+    {
+        "id": PRO6000,
+        "label": "RTX PRO 6000",
+        "vram_gb": 96,
+        "notes": "Ideogram4 / FLUX.2 Dev 默认",
+    },
 )
 
 RECIPE_CARDS: list[dict[str, Any]] = [
@@ -72,23 +78,6 @@ RECIPE_CARDS: list[dict[str, Any]] = [
 ]
 
 
-def normalize_gpu(name: str) -> str:
-    text = (name or "L40S").strip().upper().replace(" ", "-")
-    aliases = {
-        "RTX-PRO-6000": "RTX6000",
-        "RTXPRO6000": "RTX6000",
-        "PRO-6000": "RTX6000",
-        "PRO6000": "RTX6000",
-    }
-    gpu = aliases.get(text, text)
-    if gpu.startswith("A10") or gpu.startswith("A100"):
-        raise ValueError(f"GPU {name!r} is blocked; use L4, L40S, or RTX6000")
-    allowed = {item["id"] for item in ALLOWED_GPUS}
-    if gpu not in allowed:
-        raise ValueError(f"unknown GPU {name!r}; known: {', '.join(sorted(allowed))}")
-    return gpu
-
-
 def gpu_usd_per_hour(gpu: str) -> float:
     key = "gpu_hour_cost_" + GPU_ALIASES.get(gpu, gpu).lower().replace("-", "_")
     return float(FALLBACK_RATES.get(key, "1.95000"))
@@ -101,7 +90,7 @@ def list_gpus() -> list[dict[str, Any]]:
         rows.append(
             {
                 **item,
-                "name": item["id"],
+                "name": item.get("label") or item["id"],
                 "usd_per_hour": usd,
                 "usd_per_second": usd / 3600.0,
             }
@@ -122,6 +111,7 @@ def list_models() -> list[dict[str, Any]]:
                 "default_steps": recipe.get("steps"),
                 "cfg_scale": recipe.get("cfg_scale"),
                 "sampling_method": recipe.get("sampling_method") or "",
+                "default_gpu": default_gpu_for_recipe(card["id"]),
                 "uris": recipe_uris(card["id"]),
             }
         )
@@ -130,3 +120,15 @@ def list_models() -> list[dict[str, Any]]:
 
 def default_recipe() -> str:
     return "z-image-turbo"
+
+
+__all__ = [
+    "ALLOWED_GPUS",
+    "RECIPE_CARDS",
+    "default_gpu_for_recipe",
+    "default_recipe",
+    "gpu_usd_per_hour",
+    "list_gpus",
+    "list_models",
+    "normalize_gpu",
+]

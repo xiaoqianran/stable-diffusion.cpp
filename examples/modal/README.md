@@ -46,7 +46,7 @@ python3 sdcpp_modal.py cost --official
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
 | `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
-| `web` | local FastAPI | 生成 / 批量 / 任务 / 画廊 workbench on `:7860` |
+| `web` | local FastAPI | 生成 / 批量 / 任务 / 成本 / 画廊 workbench on `:7860` |
 | `cost` | local (+ optional Modal API) | print the local billed-session ledger |
 
 `generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
@@ -60,7 +60,7 @@ python3 sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange c
 
 Do not convert Ideogram4 weights yourself. `pull --recipe ideogram4` downloads the prebuilt GGUF pair from [`leejet/ideogram-4-GGUF`](https://huggingface.co/leejet/ideogram-4-GGUF) (`ideogram4-Q4_0.gguf` and `ideogram4_uncond-Q4_0.gguf`), plus the FLUX.2 VAE and Qwen3-VL GGUF. There is no `convert` command in this CLI. The FLUX.2 VAE is gated, so set `HF_TOKEN`. Ideogram4 prompts must be JSON.
 
-The default GPU is `L40S`. A 24 GB `L4` can OOM on the diffusion compute buffer. `RTX6000` also works; A10 and A100 are blocked.
+The default GPU is `L40S`. `ideogram4` and `flux2-dev` default to `RTX-PRO-6000` (96 GB Blackwell) unless `SDCPP_GPU` is set. A 24 GB `L4` can OOM on the diffusion compute buffer. A10 and A100 are blocked. Modal's live GPU name is `RTX-PRO-6000`; `RTX6000` is accepted as an alias.
 
 ## Web
 
@@ -72,11 +72,11 @@ python3 sdcpp_modal.py web
 python3 sdcpp_modal.py web --dry-run   # placeholder images, no GPU
 ```
 
-Pages: **生成**, **批量**, **任务**, **画廊**, **设置**. The static UI is plain HTML / CSS / JS talking to FastAPI, in Simplified Chinese, with a Catppuccin Mocha / Latte theme. Default recipe is `z-image-turbo`. Job metadata lives in `~/.cache/sdcpp-modal/web/` (override with `SDCPP_WEB_DATA`). `--dry-run` or `SDCPP_WEB_DRY_RUN=1` writes prompt placeholders so the UI can be tested without Modal.
+Pages: **生成**, **批量**, **任务**, **成本**, **画廊**, **设置**. The static UI is plain HTML / CSS / JS talking to FastAPI, in Simplified Chinese. Default recipe is `z-image-turbo`. Selecting Ideogram 4 or FLUX.2 Dev also selects RTX PRO 6000. Job metadata lives in `~/.cache/sdcpp-modal/web/` (override with `SDCPP_WEB_DATA`). `--dry-run` or `SDCPP_WEB_DRY_RUN=1` writes prompt placeholders so the UI can be tested without Modal. The **成本** page lists every `app.run` / `.remote` span, the per-second rate, `rate × seconds = line cost`, and the `job_…` / `img_…` it belongs to.
 
 Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
 
-Cost tracking lives in `sdcpp_hooks/cost.py` and `sdcpp_hooks/modal_meter.py`, not in `sd-cli`. Every `app.run()` and `.remote()` is a billed span. GPU containers also record enter→exit lifetime, including idle until scale-to-zero. Estimates use `modal.Workspace.billing.rates()` when available, otherwise a snapshot of those rates. `cost --official` prints the workspace invoice summary. Session and remote windows overlap, so the ledger does not add them together.
+Cost tracking lives in `sdcpp_hooks/cost.py` and `sdcpp_hooks/modal_meter.py`, not in `sd-cli`. Every `app.run()` and `.remote()` is a billed span, written to `SDCPP_COST_LOG` with `job_id` / `image_id` / `parent_id` so the workbench can rebuild the call chain. GPU containers also record enter→exit lifetime, including idle until scale-to-zero. Estimates use `modal.Workspace.billing.rates()` when available, otherwise a snapshot of those rates. `GET /api/cost` and `cost --official` expose the same ledger; the CLI prints the tree. Session and remote windows overlap, so the ledger does not add them together. Local `--dry-run` jobs appear as `$0` `local:dry_run` rows so the page is not empty.
 
 Common `sd-cli` flags are first-class (`--vae`, `--diffusion-model`, `--init-img`, `--control-net`, `--taesd`, `--sampling-method`, ...). Any other remote flag can be appended and is forwarded if `probe` sees it:
 
@@ -160,7 +160,7 @@ python3 sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turb
 | Variable | Default |
 | --- | --- |
 | `SDCPP_IMAGE` | `ghcr.io/leejet/stable-diffusion.cpp:master-cuda` |
-| `SDCPP_GPU` | `L40S` (also `L4` or `RTX6000` / RTX PRO 6000; A10 and A100 are blocked) |
+| `SDCPP_GPU` | unset: `L40S`, or `RTX-PRO-6000` for `ideogram4` / `flux2-dev` (also `L4`; A10 and A100 are blocked) |
 | `SDCPP_IDLE_SECONDS` | `10` (CPU and GPU scale to zero after this idle window) |
 | `SDCPP_SECRET` | `sdcpp-tokens` (used only if that Modal secret exists) |
 | `SDCPP_PULL_WORKERS` | `4` (parallel CPU downloads) |

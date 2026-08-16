@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from .recipes import RECIPES
+from .cost_view import job_totals
+from .gpu import default_gpu_for_recipe
+from .meter import bind_task, client_ledger, record_event
+from .cost import default_plan
 from .web_catalog import default_recipe, normalize_gpu
 from .web_events import Event, EventBus
 from .web_generator import MockGenerator, ModalGenerator
@@ -78,7 +82,8 @@ class JobService:
         recipe = config.get("recipe") or default_recipe()
         if recipe not in RECIPES:
             raise KeyError(f"unknown recipe {recipe!r}")
-        gpu = normalize_gpu(str(config.get("gpu") or "L40S"))
+        gpu_raw = config.get("gpu")
+        gpu = normalize_gpu(str(gpu_raw) if gpu_raw not in (None, "") else default_gpu_for_recipe(recipe))
         count = max(1, int(config.get("count") or 1))
         base_seed = config.get("seed")
         seed0 = int(base_seed) if base_seed not in (None, "") else 101
@@ -170,7 +175,8 @@ class JobService:
     def list_jobs(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
-        return [self._job_row(row) for row in rows]
+        costs = job_totals(client_ledger().read())
+        return [self._with_cost(self._job_row(row), costs) for row in rows]
 
     def get_job(self, job_id: str) -> dict[str, Any]:
         with self._connect() as conn:
@@ -180,13 +186,22 @@ class JobService:
         return self._job_row(row)
 
     def get_job_detail(self, job_id: str) -> dict[str, Any]:
-        job = self.get_job(job_id)
+        job = self._with_cost(self.get_job(job_id))
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM images WHERE job_id = ? ORDER BY created_at",
                 (job_id,),
             ).fetchall()
-        return {"job": job, "images": [self._image_row(row) for row in rows]}
+        images = [self._image_row(row) for row in rows]
+        by_image = {
+            item["image_id"]: item for item in job.get("cost_chain") or [] if item.get("image_id")
+        }
+        for image in images:
+            event = by_image.get(image["id"])
+            if event:
+                image["cost_usd"] = event["usd"]
+                image["usd_per_second"] = event["usd_per_second"]
+        return {"job": job, "images": images}
 
     def list_images(
         self,
@@ -262,6 +277,12 @@ class JobService:
         try:
             if dry_run:
                 mock = MockGenerator()
+                with bind_task(job_id=job_id, recipe=job["recipe"], gpu=job["gpu"]):
+                    record_event(
+                        default_plan("dry_run"),
+                        phase="local",
+                        extra={"call": "dry_run"},
+                    )
                 for item in items:
                     if job_id in self._cancel:
                         return
@@ -296,6 +317,7 @@ class JobService:
                         for item in items
                     ],
                     gpu=job["gpu"],
+                    job_id=job_id,
                 )
                 by_id = {item["id"]: item for item in items}
                 for result in results:
@@ -397,6 +419,14 @@ class JobService:
             conn.execute(f"UPDATE images SET {', '.join(assignments)} WHERE id = ?", args)
             conn.commit()
 
+    def _with_cost(self, job: dict[str, Any], costs: dict[str, Any] | None = None) -> dict[str, Any]:
+        costs = costs if costs is not None else job_totals(client_ledger().read())
+        info = costs.get(job["id"]) or {}
+        job["cost_usd"] = info.get("billed_usd") or "0"
+        job["cost_events"] = info.get("event_count") or 0
+        job["cost_chain"] = info.get("chain") or []
+        return job
+
     def _job_row(self, row: sqlite3.Row) -> dict[str, Any]:
         config = json.loads(row["config_json"])
         return {
@@ -412,7 +442,7 @@ class JobService:
             "completed_images": row["completed_images"],
             "failed_images": row["failed_images"],
             "error": row["error"],
-            "cost_usd": None,
+            "cost_usd": "0",
         }
 
     def _image_row(self, row: sqlite3.Row) -> dict[str, Any]:

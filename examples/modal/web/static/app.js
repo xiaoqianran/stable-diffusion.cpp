@@ -5,16 +5,6 @@ const notice = document.getElementById("notice");
 
 const state = { meta: null, source: null };
 
-const TONE = {
-  "z-image-turbo": "peach",
-  ideogram4: "mauve",
-  "flux2-klein": "teal",
-  "flux2-dev": "sapphire",
-  "sdxl-turbo": "yellow",
-  sd2: "green",
-  sd15: "pink",
-};
-
 const STATUS = {
   queued: "排队",
   running: "进行中",
@@ -62,11 +52,17 @@ async function api(path, options = {}) {
   return response.json();
 }
 
-function defaultsFrom(meta) {
-  const model = (meta.models || []).find((item) => item.id === (meta.defaults?.recipe || "z-image-turbo")) || {};
+function defaultGpuFor(meta, recipeId) {
+  const model = (meta.models || []).find((item) => item.id === recipeId);
+  return model?.default_gpu || meta.defaults?.gpu || "L40S";
+}
+
+function defaultsFrom(meta, recipeId) {
+  const recipe = recipeId || meta.defaults?.recipe || "z-image-turbo";
+  const model = (meta.models || []).find((item) => item.id === recipe) || {};
   return {
-    recipe: meta.defaults?.recipe || "z-image-turbo",
-    gpu: meta.defaults?.gpu || "L40S",
+    recipe,
+    gpu: defaultGpuFor(meta, recipe),
     count: 1,
     width: model.width || 512,
     height: model.height || 1024,
@@ -75,6 +71,13 @@ function defaultsFrom(meta) {
     seed: 101,
     dry_run: false,
   };
+}
+
+function gpuOptionLabel(gpu) {
+  const bits = [gpu.label || gpu.name || gpu.id];
+  if (gpu.vram_gb) bits.push(`${gpu.vram_gb}GB`);
+  if (gpu.usd_per_hour != null) bits.push(`$${Number(gpu.usd_per_hour).toFixed(2)}/时`);
+  return bits.join(" · ");
 }
 
 function field(id, name, label, value, type = "text") {
@@ -97,36 +100,52 @@ function select(id, name, label, options, value) {
 function recipeFieldset(meta, selected, prefix) {
   const cards = meta.models || [];
   return `
-    <fieldset class="recipes">
+    <fieldset>
       <legend>配方</legend>
-      <div class="recipe-grid">
+      <div class="choice-list">
         ${cards.map((model) => `
-          <label class="recipe" data-tone="${TONE[model.id] || "mauve"}">
+          <label class="choice">
             <input type="radio" name="recipe" id="${prefix}-recipe-${escapeHtml(model.id)}" value="${escapeHtml(model.id)}" ${model.id === selected ? "checked" : ""} />
-            <span class="recipe-kicker">${escapeHtml(model.id)}</span>
-            <span class="recipe-name">${escapeHtml(model.label_zh || model.label || model.name)}</span>
-            <span class="recipe-meta">${model.width}×${model.height} · ${model.default_steps} 步</span>
+            <span>
+              <span class="choice-name">${escapeHtml(model.label_zh || model.label || model.name)}</span>
+              <span class="choice-id">${escapeHtml(model.id)}</span>
+            </span>
+            <span class="choice-meta">${model.width}×${model.height} · ${model.default_steps} 步</span>
+            ${model.default_gpu === "RTX-PRO-6000" ? `<span class="tag">PRO 6000</span>` : `<span></span>`}
           </label>`).join("")}
       </div>
     </fieldset>`;
 }
 
-function settingsGrid(prefix, defaults, meta) {
+function composerFields(prefix, defaults, meta, submitLabel) {
   return `
-    ${recipeFieldset(meta, defaults.recipe, prefix)}
-    <div class="grid">
+    <div class="composer">
       ${select(`${prefix}-gpu`, "gpu", "显卡", (meta.gpus || []).map((gpu) => ({
         id: gpu.id,
-        name: `${gpu.id} · $${Number(gpu.usd_per_hour).toFixed(2)}/时`,
+        name: gpuOptionLabel(gpu),
       })), defaults.gpu)}
       ${field(`${prefix}-count`, "count", "张数", defaults.count, "number")}
-      ${field(`${prefix}-width`, "width", "宽度", defaults.width, "number")}
-      ${field(`${prefix}-height`, "height", "高度", defaults.height, "number")}
-      ${field(`${prefix}-steps`, "steps", "步数", defaults.steps, "number")}
-      ${field(`${prefix}-cfg`, "cfg_scale", "CFG", defaults.cfg_scale, "number")}
-      ${field(`${prefix}-seed`, "seed", "种子", defaults.seed, "number")}
-    </div>
-    ${field(`${prefix}-dry`, "dry_run", "演练（不调用 Modal / GPU）", defaults.dry_run, "checkbox")}
+      <div class="field">
+        <label class="field-label" for="${prefix}-go">出图</label>
+        <button id="${prefix}-go" type="submit">${submitLabel}</button>
+      </div>
+    </div>`;
+}
+
+function settingsFields(prefix, defaults, meta) {
+  return `
+    ${recipeFieldset(meta, defaults.recipe, prefix)}
+    <details class="advanced">
+      <summary>尺寸与采样</summary>
+      <div class="grid">
+        ${field(`${prefix}-width`, "width", "宽度", defaults.width, "number")}
+        ${field(`${prefix}-height`, "height", "高度", defaults.height, "number")}
+        ${field(`${prefix}-steps`, "steps", "步数", defaults.steps, "number")}
+        ${field(`${prefix}-cfg`, "cfg_scale", "CFG", defaults.cfg_scale, "number")}
+        ${field(`${prefix}-seed`, "seed", "种子", defaults.seed, "number")}
+      </div>
+      ${field(`${prefix}-dry`, "dry_run", "演练（不调用 Modal / GPU）", defaults.dry_run, "checkbox")}
+    </details>
   `;
 }
 
@@ -147,6 +166,136 @@ function formPayload(form) {
     seed: num("seed"),
     dry_run: data.get("dry_run") === "on",
   };
+}
+
+function money(value) {
+  if (value == null || value === "") return "—";
+  const text = String(value).replace(/^\$/, "");
+  if (Number(text) === 0) return "$0";
+  return `$${text}`;
+}
+
+function jobCostLabel(job) {
+  if (job?.config?.dry_run) return "演练 · $0";
+  if (job?.cost_usd == null) return "计费中";
+  return money(job.cost_usd);
+}
+
+function flattenChain(input) {
+  if (!input || !input.length) return [];
+  if (input[0].chain) {
+    return input.flatMap((trace) => trace.chain || []);
+  }
+  return input;
+}
+
+function renderCostRates(rates) {
+  const cards = rates?.cards || [];
+  if (!cards.length) return "";
+  return `<div class="rate-strip">${cards.map((card) => `
+    <span class="rate-chip">
+      <strong>${escapeHtml(card.label)}</strong>
+      ${card.note ? `<span class="muted">${escapeHtml(card.note)}</span>` : ""}
+      ${escapeHtml(money(card.usd_per_second))}/s
+      ${card.usd_per_hour ? ` · ${escapeHtml(money(card.usd_per_hour))}/h` : ""}
+    </span>`).join("")}</div>`;
+}
+
+function renderCostChain(input, caption = "Modal 调用链") {
+  const events = flattenChain(input);
+  if (!events.length) {
+    return `<p class="muted">还没有计费记录。演练任务记 $0；真实生成会在这里挂上 <code>app.run</code> 和 <code>.remote</code>。</p>`;
+  }
+  const rows = events.map((event) => {
+    const depth = Number(event.depth || 0);
+    const prefix = depth ? `${"　".repeat(depth)}↳ ` : "";
+    const job = event.job_id
+      ? `<a href="#/job/${escapeHtml(event.job_id)}">${escapeHtml(event.job_id)}</a>`
+      : "—";
+    const parts = (event.breakdown_lines || []).map((line) => escapeHtml(line)).join("<br />");
+    return `<tr>
+      <td class="mono chain-name" style="padding-left:${0.4 + depth * 1.1}rem">${prefix}${escapeHtml(event.phase)}:${escapeHtml(event.name)}</td>
+      <td class="mono">${escapeHtml(String(event.duration_s ?? (event.duration_ms / 1000).toFixed(3)))}s</td>
+      <td class="mono">${escapeHtml(money(event.usd))}</td>
+      <td class="mono">${escapeHtml(money(event.usd_per_second))}/s</td>
+      <td class="mono breakdown">${parts || escapeHtml(event.line || "—")}</td>
+      <td>${escapeHtml(event.gpu || "—")}</td>
+      <td class="mono">${job}</td>
+      <td class="mono">${escapeHtml(event.image_id || "—")}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="table-wrap"><table class="cost-table">
+    <caption>${escapeHtml(caption)}</caption>
+    <thead><tr>
+      <th scope="col">调用链</th>
+      <th scope="col">时长</th>
+      <th scope="col">费用</th>
+      <th scope="col">每秒</th>
+      <th scope="col">拆分</th>
+      <th scope="col">GPU</th>
+      <th scope="col">任务</th>
+      <th scope="col">图片</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+function renderJobRollup(jobs) {
+  const rows = Object.values(jobs || {});
+  if (!rows.length) return "";
+  return `<div class="panel">
+    <table>
+      <caption>按任务汇总（session 与 remote 重叠时间只计一次）</caption>
+      <thead><tr>
+        <th scope="col">任务</th>
+        <th scope="col">费用</th>
+        <th scope="col">笔数</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map((job) => `
+          <tr>
+            <td class="mono"><a href="#/job/${escapeHtml(job.job_id)}">${escapeHtml(job.job_id)}</a></td>
+            <td class="mono">${escapeHtml(money(job.billed_usd))}</td>
+            <td>${escapeHtml(String(job.event_count))}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function costPage(params) {
+  const jobId = params.get("job") || "";
+  document.title = "成本 · sdcpp-modal";
+  main.innerHTML = `<p class="muted">读取账本…</p>`;
+  try {
+    const query = jobId ? `?job_id=${encodeURIComponent(jobId)}` : "";
+    const report = await api(`/api/cost${query}`);
+    const billed = report.billed || {};
+    main.innerHTML = `
+      <header class="page-head">
+        <h1>成本</h1>
+        <p class="lede">每一笔 Modal <code>app.run</code> / <code>.remote</code> 的调用链，按秒计价，挂到对应任务。重叠的 session 与 remote 只计一次。</p>
+      </header>
+      <div class="cost-hero panel">
+        <div>
+          <p class="run-kicker">已入账</p>
+          <p class="cost-total">${escapeHtml(billed.display || money(billed.usd || "0"))}</p>
+          <p class="muted">${escapeHtml(String(billed.event_count || 0))} 笔 · ${escapeHtml(String(billed.duration_s || 0))}s</p>
+        </div>
+        <div>
+          <p class="hint">费率来源 ${escapeHtml(report.rates?.source || "fallback")}。账本 <span class="mono">${escapeHtml(report.ledger_path || "")}</span></p>
+          ${jobId ? `<p class="hint">只看任务 <a href="#/job/${escapeHtml(jobId)}">${escapeHtml(jobId)}</a> · <a href="#/cost">全部</a></p>` : ""}
+        </div>
+      </div>
+      ${renderCostRates(report.rates)}
+      <div class="panel">
+        ${renderCostChain(report.traces, jobId ? `任务 ${jobId} 的调用链` : "全部调用链")}
+      </div>
+      ${jobId ? "" : renderJobRollup(report.jobs)}
+    `;
+  } catch (error) {
+    main.innerHTML = `<p class="bad">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function progressBox() {
@@ -199,6 +348,7 @@ function applyRecipeDefaults(form, meta) {
   form.height.value = recipe.height;
   form.steps.value = recipe.default_steps;
   form.cfg_scale.value = recipe.cfg_scale;
+  if (form.gpu && recipe.default_gpu) form.gpu.value = recipe.default_gpu;
   const hint = document.getElementById("recipe-hint");
   if (hint) hint.textContent = recipe.hint_zh || recipe.hint || "";
   const prompt = form.querySelector("[name=prompt]");
@@ -211,23 +361,24 @@ function generatePage(meta) {
   const defaults = defaultsFrom(meta);
   document.title = "生成 · sdcpp-modal";
   main.innerHTML = `
-    <h1>生成</h1>
-    <p class="lede">本地 FastAPI 工作台，对接七个 Modal <code>sd-cli</code> 配方。这不是 <code>modal serve</code>。默认配方是 Z-Image Turbo。</p>
-    <div class="compose">
-      <form class="panel" id="gen-form" method="post" action="/api/jobs" autocomplete="off">
-        <div class="field">
+    <header class="page-head">
+      <h1>生成</h1>
+      <p class="lede">写提示词，选配方。Ideogram 4 与 FLUX.2 Dev 默认走 RTX PRO 6000，其余默认 L40S。</p>
+    </header>
+    <div class="studio">
+      <form class="sheet" id="gen-form" method="post" action="/api/jobs" autocomplete="off">
+        <div class="field prompt-block">
           <label class="field-label" for="gen-prompt">提示词</label>
           <textarea id="gen-prompt" name="prompt" required placeholder="雨夜城市，电影感摄影"></textarea>
         </div>
-        ${settingsGrid("gen", defaults, meta)}
+        ${composerFields("gen", defaults, meta, "开始生成")}
+        <span class="mono" id="job-id"></span>
+        ${settingsFields("gen", defaults, meta)}
+      </form>
+      <aside class="panel" aria-label="这次请求">
+        <p class="run-kicker">这次请求</p>
         <p class="hint" id="recipe-hint"></p>
         <p class="hint mono" id="will-apply"></p>
-        <div class="actions">
-          <button type="submit">开始生成</button>
-          <span class="mono" id="job-id"></span>
-        </div>
-      </form>
-      <aside class="panel" aria-label="任务进度">
         ${progressBox()}
       </aside>
     </div>
@@ -236,8 +387,9 @@ function generatePage(meta) {
   const refresh = () => {
     const payload = formPayload(form);
     const recipe = (meta.models || []).find((item) => item.id === payload.recipe);
+    const gpu = (meta.gpus || []).find((item) => item.id === payload.gpu);
     document.getElementById("will-apply").textContent =
-      `将请求 GPU=${payload.gpu}  配方=${payload.recipe}  ${payload.width}×${payload.height}  步数=${payload.steps}  CFG=${payload.cfg_scale}  张数=${payload.count}`;
+      `${gpuOptionLabel(gpu || { id: payload.gpu })}  ·  ${payload.recipe}  ·  ${payload.width}×${payload.height}  ·  ${payload.steps} 步  ·  ${payload.count} 张`;
     document.getElementById("recipe-hint").textContent = recipe?.hint_zh || recipe?.hint || "";
   };
   form.addEventListener("change", (event) => {
@@ -275,9 +427,11 @@ function batchPage(meta) {
   const defaults = defaultsFrom(meta);
   document.title = "批量 · sdcpp-modal";
   main.innerHTML = `
-    <h1>批量</h1>
-    <p class="lede">每行一条提示词，或放下一个 txt 文件。张数会对每一行生效。</p>
-    <form class="panel" id="batch-form" method="post" action="/api/jobs" enctype="multipart/form-data" autocomplete="off">
+    <header class="page-head">
+      <h1>批量</h1>
+      <p class="lede">每行一条提示词，或放下一个 txt。张数会对每一行生效。</p>
+    </header>
+    <form class="sheet" id="batch-form" method="post" action="/api/jobs" enctype="multipart/form-data" autocomplete="off">
       <div class="drop" id="drop">
         <label class="field-label" for="batch-file">提示词文件</label>
         <span>把 prompts.txt 拖到这里，或选择文件</span>
@@ -287,12 +441,10 @@ function batchPage(meta) {
         <label class="field-label" for="batch-text">或直接粘贴</label>
         <textarea id="batch-text" name="text" placeholder="一座美丽的森林&#10;一座未来都市"></textarea>
       </div>
-      ${settingsGrid("batch", defaults, meta)}
+      ${composerFields("batch", defaults, meta, "开始批量")}
+      <span class="mono" id="job-id"></span>
+      ${settingsFields("batch", defaults, meta)}
       <p class="hint" id="recipe-hint"></p>
-      <div class="actions">
-        <button type="submit">开始批量</button>
-        <span class="mono" id="job-id"></span>
-      </div>
       ${progressBox()}
     </form>
   `;
@@ -360,8 +512,10 @@ async function jobsPage() {
   const jobs = await api("/api/jobs");
   document.title = "任务 · sdcpp-modal";
   main.innerHTML = `
-    <h1>任务</h1>
-    <p class="lede">每一次生成或批量都是一条任务。续跑会重试未完成的帧。</p>
+    <header class="page-head">
+      <h1>任务</h1>
+      <p class="lede">每一次生成或批量都是一条任务。费用来自挂在该任务上的 Modal 调用链。</p>
+    </header>
     <div class="panel">
       <table>
         <caption>本地任务</caption>
@@ -372,6 +526,7 @@ async function jobsPage() {
             <th scope="col">图片</th>
             <th scope="col">配方</th>
             <th scope="col">显卡</th>
+            <th scope="col">费用</th>
             <th scope="col">操作</th>
           </tr>
         </thead>
@@ -383,11 +538,12 @@ async function jobsPage() {
               <td>${job.completed_images}/${job.total_images}</td>
               <td>${escapeHtml(job.recipe)}</td>
               <td>${escapeHtml(job.gpu)}</td>
+              <td class="mono"><a href="#/cost?job=${escapeHtml(job.id)}">${escapeHtml(jobCostLabel(job))}</a></td>
               <td>
                 <button type="button" class="ghost" data-gallery="${escapeHtml(job.id)}">画廊</button>
                 <button type="button" class="ghost" data-resume="${escapeHtml(job.id)}">续跑</button>
               </td>
-            </tr>`).join("") || `<tr><td colspan="6">还没有任务。先去生成一页。</td></tr>`}
+            </tr>`).join("") || `<tr><td colspan="7">还没有任务。先去生成一页。</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -415,16 +571,24 @@ async function jobDetailPage(jobId) {
   const job = detail.job;
   document.title = `任务 ${job.id} · sdcpp-modal`;
   main.innerHTML = `
-    <h1>任务详情</h1>
+    <header class="page-head">
+      <h1>任务详情</h1>
+    </header>
     <div class="panel">
       <div class="row"><span>编号</span><span class="mono">${escapeHtml(job.id)}</span></div>
       <div class="row"><span>状态</span><span class="pill ${escapeHtml(job.status)}">${STATUS[job.status] || escapeHtml(job.status)}</span></div>
       <div class="row"><span>配方 / 显卡</span><span>${escapeHtml(job.recipe)} · ${escapeHtml(job.gpu)}</span></div>
       <div class="row"><span>图片</span><span>${job.completed_images}/${job.total_images}</span></div>
+      <div class="row"><span>费用</span><span class="mono">${escapeHtml(jobCostLabel(job))} · ${escapeHtml(String(job.cost_events || 0))} 笔</span></div>
       <div class="actions" style="margin-block-start:1rem">
         <button type="button" class="ghost" id="to-gallery">查看画廊</button>
         <button type="button" class="ghost" id="to-jobs">全部任务</button>
+        <button type="button" class="ghost" id="to-cost">调用链</button>
       </div>
+    </div>
+    <h2 class="section">调用链</h2>
+    <div class="panel">
+      ${renderCostChain(job.cost_chain, "该任务的 Modal / 本地计费")}
     </div>
     <h2 class="section">帧</h2>
     <div class="panel">
@@ -437,6 +601,7 @@ async function jobDetailPage(jobId) {
             <th scope="col">种子</th>
             <th scope="col">尺寸</th>
             <th scope="col">耗时</th>
+            <th scope="col">费用</th>
           </tr>
         </thead>
         <tbody>
@@ -447,7 +612,8 @@ async function jobDetailPage(jobId) {
               <td class="mono">${escapeHtml(item.seed)}</td>
               <td>${item.width}×${item.height}</td>
               <td>${item.duration_ms != null ? (item.duration_ms / 1000).toFixed(2) + " 秒" : "—"}</td>
-            </tr>`).join("") || `<tr><td colspan="5">还没有帧。</td></tr>`}
+              <td class="mono">${item.cost_usd != null ? `${escapeHtml(money(item.cost_usd))}${item.usd_per_second ? ` · ${escapeHtml(money(item.usd_per_second))}/s` : ""}` : "—"}</td>
+            </tr>`).join("") || `<tr><td colspan="6">还没有帧。</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -457,6 +623,9 @@ async function jobDetailPage(jobId) {
   });
   document.getElementById("to-jobs").addEventListener("click", () => {
     location.hash = "#/jobs";
+  });
+  document.getElementById("to-cost").addEventListener("click", () => {
+    location.hash = `#/cost?job=${job.id}`;
   });
 }
 
@@ -473,8 +642,10 @@ async function galleryPage(params) {
   const data = await api(`/api/gallery?${query}`);
   document.title = "画廊 · sdcpp-modal";
   main.innerHTML = `
-    <h1>画廊</h1>
-    <p class="lede">本地已有 ${data.total} 张图。点开卡片可看提示词和种子。</p>
+    <header class="page-head">
+      <h1>画廊</h1>
+      <p class="lede">本地已有 ${data.total} 张图。点开卡片可看提示词和种子。</p>
+    </header>
     <form class="toolbar" id="filters" method="get" action="#/gallery">
       <div class="field">
         <label class="field-label" for="filter-q">搜索提示词</label>
@@ -493,11 +664,11 @@ async function galleryPage(params) {
     <div class="gallery">
       ${data.items.map((image) => `
         <article>
-          <button type="button" class="card" data-id="${escapeHtml(image.id)}">
+          <button type="button" class="shot" data-id="${escapeHtml(image.id)}">
             <img src="/api/images/${escapeHtml(image.id)}/file" alt="${escapeHtml(image.prompt)}" width="${image.width || 512}" height="${image.height || 1024}" />
             <span class="cap">${escapeHtml(image.prompt)}</span>
           </button>
-        </article>`).join("") || "<p>还没有图片。去生成一页。</p>"}
+        </article>`).join("") || `<p class="empty">还没有图片。<a href="#/generate">去生成</a></p>`}
     </div>
     <nav class="pager" aria-label="画廊分页">
       <button type="button" class="ghost" ${page <= 1 ? "disabled" : ""} id="prev">上一页</button>
@@ -523,7 +694,7 @@ async function galleryPage(params) {
     params.set("page", String(page + 1));
     location.hash = `#/gallery?${params}`;
   });
-  main.querySelectorAll(".card").forEach((card) => {
+  main.querySelectorAll(".shot").forEach((card) => {
     card.addEventListener("click", () => openLightbox(card.dataset.id));
   });
 }
@@ -575,17 +746,20 @@ async function settingsPage(meta) {
   const doctor = await api("/api/doctor");
   document.title = "设置 · sdcpp-modal";
   main.innerHTML = `
-    <h1>设置</h1>
-    <p class="lede">本地工作台。权重留在卷 <code>sdcpp-models</code>。默认显卡是 L40S。A10 与 A100 已禁用。</p>
+    <header class="page-head">
+      <h1>设置</h1>
+      <p class="lede">本地工作台。权重留在卷 <code>sdcpp-models</code>。Ideogram 4 与 FLUX.2 Dev 默认 <code>RTX-PRO-6000</code>，其余默认 L40S。A10 与 A100 已禁用。</p>
+    </header>
     <div class="panel">
       <div class="row"><span>数据目录</span><span class="mono">${escapeHtml(meta.defaults.data_dir)}</span></div>
       <div class="row"><span>默认配方</span><span>${escapeHtml(meta.defaults.recipe)}</span></div>
       <div class="row"><span>默认显卡</span><span>${escapeHtml(meta.defaults.gpu)}</span></div>
+      <div class="row"><span>成本账本</span><span class="mono">${escapeHtml(meta.defaults.cost_log || "")}</span></div>
       <h2 class="section">配方</h2>
       ${(meta.models || []).map((model) => `
         <div class="row">
           <span>${escapeHtml(model.label_zh || model.label)}</span>
-          <span class="mono">${escapeHtml(model.id)} · ${model.width}×${model.height} · ${model.default_steps} 步</span>
+          <span class="mono">${escapeHtml(model.id)} · ${model.width}×${model.height} · ${escapeHtml(model.default_gpu)}</span>
         </div>`).join("")}
       <h2 class="section">自检</h2>
       <div>
@@ -605,15 +779,19 @@ async function render(forced) {
   const page = forced || pageName || "generate";
   const params = new URLSearchParams(query || "");
   document.querySelectorAll("nav a").forEach((link) => {
-    const current = link.dataset.page === page || (page.startsWith("job/") && link.dataset.page === "jobs");
+    const current = link.dataset.page === page
+      || (page.startsWith("job/") && link.dataset.page === "jobs")
+      || (page === "cost" && link.dataset.page === "cost");
     if (current) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
+  main.classList.toggle("is-wide", page === "cost" || page.startsWith("job/"));
   if (!state.meta) state.meta = await api("/api/meta");
   if (page === "generate") generatePage(state.meta);
   else if (page === "batch") batchPage(state.meta);
   else if (page === "jobs") await jobsPage();
   else if (page.startsWith("job/")) await jobDetailPage(page.slice(4));
+  else if (page === "cost") await costPage(params);
   else if (page === "gallery") await galleryPage(params);
   else if (page === "settings") await settingsPage(state.meta);
   else generatePage(state.meta);
@@ -628,7 +806,7 @@ lightbox.addEventListener("click", (event) => {
   try {
     const [doctor, meta] = await Promise.all([api("/api/doctor"), api("/api/meta")]);
     state.meta = meta;
-    railStatus.textContent = doctor.ready ? "本地网页 · 七个配方" : "设置未完成";
+    railStatus.textContent = doctor.ready ? "本地就绪" : "设置未完成";
     railStatus.className = doctor.ready ? "rail-foot ok" : "rail-foot bad";
   } catch {
     railStatus.textContent = "接口离线";

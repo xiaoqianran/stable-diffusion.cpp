@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import base64
+import os
 import sys
 from pathlib import Path
 
 from app import (
-    GPU,
     SDEngine,
     ensure_artifacts,
     gpu_app,
@@ -20,12 +20,20 @@ from app import (
 )
 from sdcpp_hooks.cli import parse_argv
 from sdcpp_hooks.contract import ValidationError
+from sdcpp_hooks.gpu import default_gpu_for_recipe, normalize_gpu
 from sdcpp_hooks.hardware import format_host_summary
 from sdcpp_hooks.hf_dataset import publish_image, trigger_pages_rebuild
 from sdcpp_hooks.modal_meter import billed_app, billed_remote, cost_command, print_last_cost
 
 
 MAX_PUT_BYTES = 64 * 1024 * 1024
+
+
+def _runtime_gpu(recipe: str) -> str:
+    raw = os.environ.get("SDCPP_GPU")
+    if raw:
+        return normalize_gpu(raw)
+    return default_gpu_for_recipe(recipe)
 
 
 def _print_storage(rows: list[dict]) -> None:
@@ -106,9 +114,18 @@ def main(argv: list[str] | None = None) -> int:
         print_last_cost()
     print_last_cost()
 
-    print(f"gpu {GPU}")
+    gpu = _runtime_gpu(command.recipe)
+    os.environ["SDCPP_GPU"] = gpu
+    print(f"gpu {gpu}")
     with billed_app(gpu_app, "gpu"):
-        result = billed_remote(SDEngine().generate, payload, name="generate", gpu=True)
+        try:
+            engine = SDEngine.with_options(gpu=gpu)()
+        except Exception:
+            engine = SDEngine()
+        result = billed_remote(engine.generate, payload, name="generate", gpu=True)
+        host = result.get("host")
+        if isinstance(host, dict):
+            host["modal_gpu"] = gpu
         print_last_cost()
     print_last_cost()
     if not result["images"]:

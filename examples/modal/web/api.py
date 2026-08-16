@@ -10,6 +10,9 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from sdcpp_hooks.cost_view import ledger_report
+from sdcpp_hooks.gpu import DEFAULT_GPU, default_gpu_for_recipe
+from sdcpp_hooks.meter import client_ledger_path
 from sdcpp_hooks.web_catalog import default_recipe, list_gpus, list_models, normalize_gpu
 from sdcpp_hooks.web_events import EventBus
 from sdcpp_hooks.web_jobs import JobService
@@ -41,7 +44,7 @@ class CreateJobBody(BaseModel):
     count: int = 1
     recipe: str = default_recipe()
     model: str | None = None
-    gpu: str = "L40S"
+    gpu: str | None = None
     width: int | None = None
     height: int | None = None
     steps: int | None = None
@@ -71,7 +74,7 @@ def _config_from_body(body: CreateJobBody) -> dict[str, Any]:
     recipe = body.recipe or body.model or default_recipe()
     return {
         "recipe": recipe,
-        "gpu": body.gpu,
+        "gpu": body.gpu or default_gpu_for_recipe(recipe),
         "width": body.width,
         "height": body.height,
         "steps": body.steps,
@@ -87,6 +90,11 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/cost")
+def cost_ledger(job_id: str | None = None) -> dict[str, Any]:
+    return ledger_report(job_id=job_id)
+
+
 @router.get("/meta")
 def meta() -> dict[str, Any]:
     return {
@@ -95,9 +103,10 @@ def meta() -> dict[str, Any]:
         "defaults": {
             "model": default_recipe(),
             "recipe": default_recipe(),
-            "gpu": "L40S",
+            "gpu": DEFAULT_GPU,
             "port": 7860,
             "data_dir": str(_DATA_DIR),
+            "cost_log": str(client_ledger_path()),
         },
         "version": "0.1.0",
         "runtime": {
@@ -138,8 +147,9 @@ def doctor() -> dict[str, Any]:
 @router.post("/jobs")
 def create_job(body: CreateJobBody) -> dict[str, Any]:
     try:
-        normalize_gpu(body.gpu)
-        job = _service.create_job(_specs_from_body(body), _config_from_body(body))
+        config = _config_from_body(body)
+        normalize_gpu(config["gpu"])
+        job = _service.create_job(_specs_from_body(body), config)
     except (KeyError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     _service.start(job["id"])
@@ -151,7 +161,7 @@ async def create_job_from_file(
     file: UploadFile = File(...),
     recipe: str = default_recipe(),
     model: str | None = None,
-    gpu: str = "L40S",
+    gpu: str | None = None,
     count: int = 1,
     width: int | None = None,
     height: int | None = None,
