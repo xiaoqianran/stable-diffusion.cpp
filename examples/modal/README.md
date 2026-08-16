@@ -1,5 +1,18 @@
 # Modal CLI
 
+```bash
+cd examples/modal
+uv sync
+uv run modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
+
+uv run python sdcpp_modal.py pull --all
+uv run python sdcpp_modal.py ls
+uv run python sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turbo -o zimage.png
+uv run python sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
+uv run python sdcpp_modal.py web
+uv run python sdcpp_modal.py cost
+```
+
 Run the official `sd-cli` on [Modal](https://modal.com) when the local machine cannot host the model.
 
 This example does not change the C API, local CLI, or server. It treats `sd-cli` as a black box: each GPU container probes `--help` and only forwards flags that exist on that binary.
