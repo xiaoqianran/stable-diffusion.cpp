@@ -1,37 +1,41 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>sdcpp-modal</title>
+  <title>sdcpp-modal · 七方工作台</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@380;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
+  <a class="skip" href="#main">跳到主内容</a>
   <div class="app">
     <aside class="rail">
-      <div class="brand">
-        <span class="mark"></span>
-        <div>
+      <p class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <span>
           <strong>sdcpp-modal</strong>
-          <small>remote darkroom</small>
-        </div>
-      </div>
-      <nav id="nav">
-        <a href="#/generate" data-page="generate">Generate</a>
-        <a href="#/batch" data-page="batch">Batch</a>
-        <a href="#/jobs" data-page="jobs">Jobs</a>
-        <a href="#/gallery" data-page="gallery">Gallery</a>
-        <a href="#/settings" data-page="settings">Settings</a>
+          <small>七方工作台</small>
+        </span>
+      </p>
+      <nav aria-label="工作台">
+        <a href="#/generate" data-page="generate">生成</a>
+        <a href="#/batch" data-page="batch">批量</a>
+        <a href="#/jobs" data-page="jobs">任务</a>
+        <a href="#/gallery" data-page="gallery">画廊</a>
+        <a href="#/settings" data-page="settings">设置</a>
       </nav>
-      <div class="rail-foot" id="rail-status">checking…</div>
+      <p class="rail-foot" id="rail-status" role="status">正在检查…</p>
     </aside>
-    <main id="main"></main>
+    <div class="stage">
+      <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+      <main id="main" tabindex="-1"></main>
+    </div>
   </div>
-  <div id="lightbox" class="lightbox hidden"></div>
+  <dialog id="lightbox" aria-labelledby="lightbox-title"></dialog>
   <script src="/static/app.js" type="module"></script>
 </body>
 </html>

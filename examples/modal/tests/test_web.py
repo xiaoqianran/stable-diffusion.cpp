@@ -82,3 +82,5 @@ def test_fastapi_create_job_dry_run(tmp_path):
     home = client.get("/")
     assert home.status_code == 200
     assert "sdcpp-modal" in home.text
+    assert 'lang="zh-CN"' in home.text
+    assert "七方工作台" in home.text

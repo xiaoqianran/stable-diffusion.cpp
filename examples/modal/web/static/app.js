@@ -1,8 +1,50 @@
 const main = document.getElementById("main");
 const lightbox = document.getElementById("lightbox");
 const railStatus = document.getElementById("rail-status");
+const notice = document.getElementById("notice");
 
 const state = { meta: null, source: null };
+
+const TONE = {
+  "z-image-turbo": "peach",
+  ideogram4: "mauve",
+  "flux2-klein": "teal",
+  "flux2-dev": "sapphire",
+  "sdxl-turbo": "yellow",
+  sd2: "green",
+  sd15: "pink",
+};
+
+const STATUS = {
+  queued: "排队",
+  running: "进行中",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+};
+
+const DOCTOR = {
+  recipes: "配方",
+  data_dir: "数据目录",
+  modal: "Modal",
+  pillow: "Pillow",
+};
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function showNotice(message, kind = "ok") {
+  notice.hidden = !message;
+  notice.dataset.kind = kind;
+  notice.textContent = message || "";
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
@@ -35,38 +77,56 @@ function defaultsFrom(meta) {
   };
 }
 
-function field(name, label, value, type = "text") {
+function field(id, name, label, value, type = "text") {
   if (type === "checkbox") {
-    return `<label class="check"><span>${label}</span><input type="checkbox" name="${name}" ${value ? "checked" : ""} /></label>`;
+    return `<label class="check" for="${id}"><span>${label}</span><input id="${id}" type="checkbox" name="${name}" ${value ? "checked" : ""} /></label>`;
   }
-  return `<div><label>${label}</label><input name="${name}" type="${type}" value="${value ?? ""}" /></div>`;
+  const extra = type === "number" ? `inputmode="decimal"` : "";
+  return `<div class="field"><label class="field-label" for="${id}">${label}</label><input id="${id}" name="${name}" type="${type}" value="${escapeHtml(value ?? "")}" ${extra} /></div>`;
 }
 
-function select(name, label, options, value) {
+function select(id, name, label, options, value) {
   const opts = options.map((item) => {
-    const id = item.id || item;
+    const optionId = item.id || item;
     const title = item.name || item.id || item;
-    return `<option value="${id}" ${id === value ? "selected" : ""}>${title}</option>`;
+    return `<option value="${escapeHtml(optionId)}" ${optionId === value ? "selected" : ""}>${escapeHtml(title)}</option>`;
   }).join("");
-  return `<div><label>${label}</label><select name="${name}">${opts}</select></div>`;
+  return `<div class="field"><label class="field-label" for="${id}">${label}</label><select id="${id}" name="${name}">${opts}</select></div>`;
 }
 
-function settingsGrid(d, meta) {
+function recipeFieldset(meta, selected, prefix) {
+  const cards = meta.models || [];
   return `
+    <fieldset class="recipes">
+      <legend>配方</legend>
+      <div class="recipe-grid">
+        ${cards.map((model) => `
+          <label class="recipe" data-tone="${TONE[model.id] || "mauve"}">
+            <input type="radio" name="recipe" id="${prefix}-recipe-${escapeHtml(model.id)}" value="${escapeHtml(model.id)}" ${model.id === selected ? "checked" : ""} />
+            <span class="recipe-kicker">${escapeHtml(model.id)}</span>
+            <span class="recipe-name">${escapeHtml(model.label_zh || model.label || model.name)}</span>
+            <span class="recipe-meta">${model.width}×${model.height} · ${model.default_steps} 步</span>
+          </label>`).join("")}
+      </div>
+    </fieldset>`;
+}
+
+function settingsGrid(prefix, defaults, meta) {
+  return `
+    ${recipeFieldset(meta, defaults.recipe, prefix)}
     <div class="grid">
-      ${select("recipe", "Recipe", meta.models || [], d.recipe)}
-      ${select("gpu", "GPU", (meta.gpus || []).map((gpu) => ({
+      ${select(`${prefix}-gpu`, "gpu", "显卡", (meta.gpus || []).map((gpu) => ({
         id: gpu.id,
-        name: `${gpu.id} · $${Number(gpu.usd_per_hour).toFixed(2)}/hr`,
-      })), d.gpu)}
-      ${field("count", "Count", d.count, "number")}
-      ${field("width", "Width", d.width, "number")}
-      ${field("height", "Height", d.height, "number")}
-      ${field("steps", "Steps", d.steps, "number")}
-      ${field("cfg_scale", "CFG", d.cfg_scale, "number")}
-      ${field("seed", "Seed", d.seed, "number")}
+        name: `${gpu.id} · $${Number(gpu.usd_per_hour).toFixed(2)}/时`,
+      })), defaults.gpu)}
+      ${field(`${prefix}-count`, "count", "张数", defaults.count, "number")}
+      ${field(`${prefix}-width`, "width", "宽度", defaults.width, "number")}
+      ${field(`${prefix}-height`, "height", "高度", defaults.height, "number")}
+      ${field(`${prefix}-steps`, "steps", "步数", defaults.steps, "number")}
+      ${field(`${prefix}-cfg`, "cfg_scale", "CFG", defaults.cfg_scale, "number")}
+      ${field(`${prefix}-seed`, "seed", "种子", defaults.seed, "number")}
     </div>
-    ${field("dry_run", "Dry run (no Modal / no GPU)", d.dry_run, "checkbox")}
+    ${field(`${prefix}-dry`, "dry_run", "演练（不调用 Modal / GPU）", defaults.dry_run, "checkbox")}
   `;
 }
 
@@ -90,14 +150,20 @@ function formPayload(form) {
 }
 
 function progressBox() {
-  return `<div class="progress" id="progress"><div>0 / 0</div><div class="bar"><span></span></div></div>`;
+  return `
+    <div class="progress" id="progress">
+      <label class="field-label" for="progress-bar">进度</label>
+      <div id="progress-text">0 / 0</div>
+      <progress id="progress-bar" max="100" value="0">0%</progress>
+    </div>`;
 }
 
 function setProgress(completed, total, extra = "") {
-  const root = document.getElementById("progress");
-  if (!root) return;
-  root.firstElementChild.textContent = `${completed} / ${total} ${extra}`.trim();
-  root.querySelector("span").style.width = total ? `${Math.min(100, (completed / total) * 100)}%` : "0%";
+  const text = document.getElementById("progress-text");
+  const bar = document.getElementById("progress-bar");
+  if (!text || !bar) return;
+  text.textContent = `${completed} / ${total}${extra ? ` · ${extra}` : ""}`;
+  bar.value = total ? Math.min(100, Math.round((completed / total) * 100)) : 0;
 }
 
 function listenJob(jobId) {
@@ -110,64 +176,76 @@ function listenJob(jobId) {
       setProgress(progress.completed_images || 0, progress.total_images || 0);
     }
     if (event.type === "image.completed" || event.type === "image.failed") {
-      setProgress(progress.completed || 0, progress.total || 0, event.type === "image.failed" ? "failed" : "");
+      setProgress(progress.completed || 0, progress.total || 0, event.type === "image.failed" ? "失败" : "");
     }
     if (["job.completed", "job.failed", "job.cancelled"].includes(event.type)) {
-      setProgress(event.payload.completed_images || 0, event.payload.total_images || 0, event.payload.status);
+      const status = STATUS[event.payload.status] || event.payload.status;
+      setProgress(event.payload.completed_images || 0, event.payload.total_images || 0, status);
       state.source.close();
-      if (event.type === "job.failed") alert(event.payload.error || "job failed");
-      if (event.type === "job.completed") render("gallery");
+      if (event.type === "job.failed") showNotice(event.payload.error || "任务失败", "bad");
+      if (event.type === "job.completed") {
+        showNotice("生成完成，已写入本地画廊。", "ok");
+        render("gallery");
+      }
     }
   };
 }
 
 function applyRecipeDefaults(form, meta) {
-  const recipe = (meta.models || []).find((item) => item.id === form.recipe.value);
+  const recipeId = new FormData(form).get("recipe");
+  const recipe = (meta.models || []).find((item) => item.id === recipeId);
   if (!recipe) return;
   form.width.value = recipe.width;
   form.height.value = recipe.height;
   form.steps.value = recipe.default_steps;
   form.cfg_scale.value = recipe.cfg_scale;
   const hint = document.getElementById("recipe-hint");
-  if (hint) hint.textContent = recipe.hint || "";
+  if (hint) hint.textContent = recipe.hint_zh || recipe.hint || "";
   const prompt = form.querySelector("[name=prompt]");
   if (prompt && recipe.id === "ideogram4" && !prompt.value.trim()) {
-    prompt.placeholder = '{"high_level_description":"A fluffy orange cat"}';
+    prompt.placeholder = '{"high_level_description":"一只毛茸茸的橘猫"}';
   }
 }
 
 function generatePage(meta) {
-  const d = defaultsFrom(meta);
+  const defaults = defaultsFrom(meta);
+  document.title = "生成 · sdcpp-modal";
   main.innerHTML = `
-    <h1>Generate</h1>
-    <p class="lede">Local workbench for the seven Modal <code>sd-cli</code> recipes. This is not <code>modal serve</code>. Default recipe is Z-Image Turbo — the stack that already produced the 30-image gallery.</p>
-    <form class="panel" id="gen-form">
-      <label>Prompt</label>
-      <textarea name="prompt" placeholder="a rainy city at night, cinematic photograph" required></textarea>
-      ${settingsGrid(d, meta)}
-      <p class="apply-line" id="recipe-hint"></p>
-      <p class="apply-line mono" id="will-apply"></p>
-      <div class="actions">
-        <button type="submit">Generate</button>
-        <span class="mono" id="job-id"></span>
-      </div>
-      ${progressBox()}
-    </form>
+    <h1>生成</h1>
+    <p class="lede">本地 FastAPI 工作台，对接七个 Modal <code>sd-cli</code> 配方。这不是 <code>modal serve</code>。默认配方是 Z-Image Turbo。</p>
+    <div class="compose">
+      <form class="panel" id="gen-form" method="post" action="/api/jobs" autocomplete="off">
+        <div class="field">
+          <label class="field-label" for="gen-prompt">提示词</label>
+          <textarea id="gen-prompt" name="prompt" required placeholder="雨夜城市，电影感摄影"></textarea>
+        </div>
+        ${settingsGrid("gen", defaults, meta)}
+        <p class="hint" id="recipe-hint"></p>
+        <p class="hint mono" id="will-apply"></p>
+        <div class="actions">
+          <button type="submit">开始生成</button>
+          <span class="mono" id="job-id"></span>
+        </div>
+      </form>
+      <aside class="panel" aria-label="任务进度">
+        ${progressBox()}
+      </aside>
+    </div>
   `;
   const form = document.getElementById("gen-form");
   const refresh = () => {
     const payload = formPayload(form);
     const recipe = (meta.models || []).find((item) => item.id === payload.recipe);
     document.getElementById("will-apply").textContent =
-      `will request GPU=${payload.gpu}  recipe=${payload.recipe}  ${payload.width}×${payload.height}  steps=${payload.steps}  cfg=${payload.cfg_scale}  count=${payload.count}`;
-    document.getElementById("recipe-hint").textContent = recipe?.hint || "";
+      `将请求 GPU=${payload.gpu}  配方=${payload.recipe}  ${payload.width}×${payload.height}  步数=${payload.steps}  CFG=${payload.cfg_scale}  张数=${payload.count}`;
+    document.getElementById("recipe-hint").textContent = recipe?.hint_zh || recipe?.hint || "";
   };
-  form.recipe.onchange = () => {
-    applyRecipeDefaults(form, meta);
+  form.addEventListener("change", (event) => {
+    if (event.target.name === "recipe") applyRecipeDefaults(form, meta);
     refresh();
-  };
+  });
   form.addEventListener("input", refresh);
-  form.onsubmit = async (event) => {
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = event.target.querySelector("button[type=submit]");
     button.disabled = true;
@@ -181,49 +259,63 @@ function generatePage(meta) {
       });
       document.getElementById("job-id").textContent = job.id;
       setProgress(0, job.total_images);
+      showNotice(`任务已排队：${job.id}`);
       listenJob(job.id);
     } catch (error) {
-      alert(error.message);
+      showNotice(error.message, "bad");
     } finally {
       button.disabled = false;
     }
-  };
+  });
   applyRecipeDefaults(form, meta);
   refresh();
 }
 
 function batchPage(meta) {
-  const d = defaultsFrom(meta);
+  const defaults = defaultsFrom(meta);
+  document.title = "批量 · sdcpp-modal";
   main.innerHTML = `
-    <h1>Batch</h1>
-    <p class="lede">Paste one prompt per line, or drop a txt file. Count applies to every line.</p>
-    <form class="panel" id="batch-form">
-      <div class="drop" id="drop">Drop prompts.txt here, or choose a file
-        <div style="margin-top:12px"><input type="file" name="file" accept=".txt,.jsonl" /></div>
+    <h1>批量</h1>
+    <p class="lede">每行一条提示词，或放下一个 txt 文件。张数会对每一行生效。</p>
+    <form class="panel" id="batch-form" method="post" action="/api/jobs" enctype="multipart/form-data" autocomplete="off">
+      <div class="drop" id="drop">
+        <label class="field-label" for="batch-file">提示词文件</label>
+        <span>把 prompts.txt 拖到这里，或选择文件</span>
+        <input id="batch-file" type="file" name="file" accept=".txt,.jsonl" />
       </div>
-      <label>Or paste</label>
-      <textarea name="text" placeholder="a beautiful forest&#10;a futuristic city"></textarea>
-      ${settingsGrid(d, meta)}
-      <p class="apply-line" id="recipe-hint"></p>
-      <div class="actions"><button type="submit">Run batch</button><span class="mono" id="job-id"></span></div>
+      <div class="field">
+        <label class="field-label" for="batch-text">或直接粘贴</label>
+        <textarea id="batch-text" name="text" placeholder="一座美丽的森林&#10;一座未来都市"></textarea>
+      </div>
+      ${settingsGrid("batch", defaults, meta)}
+      <p class="hint" id="recipe-hint"></p>
+      <div class="actions">
+        <button type="submit">开始批量</button>
+        <span class="mono" id="job-id"></span>
+      </div>
       ${progressBox()}
     </form>
   `;
   const form = document.getElementById("batch-form");
   const drop = document.getElementById("drop");
-  const fileInput = drop.querySelector("input[type=file]");
-  drop.ondragover = (event) => { event.preventDefault(); drop.classList.add("over"); };
-  drop.ondragleave = () => drop.classList.remove("over");
-  drop.ondrop = (event) => {
+  const fileInput = document.getElementById("batch-file");
+  drop.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    drop.classList.add("over");
+  });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (event) => {
     event.preventDefault();
     drop.classList.remove("over");
     if (event.dataTransfer.files[0]) fileInput.files = event.dataTransfer.files;
-  };
-  form.recipe.onchange = () => applyRecipeDefaults(form, meta);
+  });
+  form.addEventListener("change", (event) => {
+    if (event.target.name === "recipe") applyRecipeDefaults(form, meta);
+  });
   applyRecipeDefaults(form, meta);
-  form.onsubmit = async (event) => {
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const button = event.target.querySelector("button");
+    const button = event.target.querySelector("button[type=submit]");
     button.disabled = true;
     try {
       const payload = formPayload(event.target);
@@ -254,85 +346,118 @@ function batchPage(meta) {
       }
       document.getElementById("job-id").textContent = job.id;
       setProgress(0, job.total_images);
+      showNotice(`批量任务已排队：${job.id}`);
       listenJob(job.id);
     } catch (error) {
-      alert(error.message);
+      showNotice(error.message, "bad");
     } finally {
       button.disabled = false;
     }
-  };
+  });
 }
 
 async function jobsPage() {
   const jobs = await api("/api/jobs");
+  document.title = "任务 · sdcpp-modal";
   main.innerHTML = `
-    <h1>Jobs</h1>
-    <p class="lede">Every generate or batch is a Job. Resume retries unfinished frames.</p>
+    <h1>任务</h1>
+    <p class="lede">每一次生成或批量都是一条任务。续跑会重试未完成的帧。</p>
     <div class="panel">
       <table>
-        <thead><tr><th>ID</th><th>STATUS</th><th>IMAGES</th><th>RECIPE</th><th>GPU</th><th></th></tr></thead>
+        <caption>本地任务</caption>
+        <thead>
+          <tr>
+            <th scope="col">编号</th>
+            <th scope="col">状态</th>
+            <th scope="col">图片</th>
+            <th scope="col">配方</th>
+            <th scope="col">显卡</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
         <tbody>
           ${jobs.map((job) => `
             <tr>
-              <td class="mono"><a href="#/job/${job.id}">${job.id}</a></td>
-              <td><span class="pill ${job.status}">${job.status}</span></td>
+              <td class="mono"><a href="#/job/${escapeHtml(job.id)}">${escapeHtml(job.id)}</a></td>
+              <td><span class="pill ${escapeHtml(job.status)}">${STATUS[job.status] || escapeHtml(job.status)}</span></td>
               <td>${job.completed_images}/${job.total_images}</td>
-              <td>${job.recipe}</td>
-              <td>${job.gpu}</td>
+              <td>${escapeHtml(job.recipe)}</td>
+              <td>${escapeHtml(job.gpu)}</td>
               <td>
-                <button class="ghost" data-gallery="${job.id}">Gallery</button>
-                <button class="ghost" data-resume="${job.id}">Resume</button>
+                <button type="button" class="ghost" data-gallery="${escapeHtml(job.id)}">画廊</button>
+                <button type="button" class="ghost" data-resume="${escapeHtml(job.id)}">续跑</button>
               </td>
-            </tr>`).join("") || `<tr><td colspan="6">No jobs yet.</td></tr>`}
+            </tr>`).join("") || `<tr><td colspan="6">还没有任务。先去生成一页。</td></tr>`}
         </tbody>
       </table>
     </div>
   `;
   main.querySelectorAll("[data-gallery]").forEach((button) => {
-    button.onclick = () => { location.hash = `#/gallery?job=${button.dataset.gallery}`; };
+    button.addEventListener("click", () => {
+      location.hash = `#/gallery?job=${button.dataset.gallery}`;
+    });
   });
   main.querySelectorAll("[data-resume]").forEach((button) => {
-    button.onclick = async () => {
-      await api(`/api/jobs/${button.dataset.resume}/resume`, { method: "POST" });
-      render("jobs");
-    };
+    button.addEventListener("click", async () => {
+      try {
+        await api(`/api/jobs/${button.dataset.resume}/resume`, { method: "POST" });
+        showNotice("已续跑未完成的帧。");
+        render("jobs");
+      } catch (error) {
+        showNotice(error.message, "bad");
+      }
+    });
   });
 }
 
 async function jobDetailPage(jobId) {
   const detail = await api(`/api/jobs/${jobId}`);
   const job = detail.job;
+  document.title = `任务 ${job.id} · sdcpp-modal`;
   main.innerHTML = `
-    <h1>Job</h1>
+    <h1>任务详情</h1>
     <div class="panel">
-      <div class="check"><span>ID</span><span class="mono">${job.id}</span></div>
-      <div class="check"><span>Status</span><span class="pill ${job.status}">${job.status}</span></div>
-      <div class="check"><span>Recipe / GPU</span><span>${job.recipe} · ${job.gpu}</span></div>
-      <div class="check"><span>Images</span><span>${job.completed_images}/${job.total_images}</span></div>
-      <div class="actions" style="margin-top:16px">
-        <button class="ghost" id="to-gallery">Gallery</button>
-        <button class="ghost" id="to-jobs">All jobs</button>
+      <div class="row"><span>编号</span><span class="mono">${escapeHtml(job.id)}</span></div>
+      <div class="row"><span>状态</span><span class="pill ${escapeHtml(job.status)}">${STATUS[job.status] || escapeHtml(job.status)}</span></div>
+      <div class="row"><span>配方 / 显卡</span><span>${escapeHtml(job.recipe)} · ${escapeHtml(job.gpu)}</span></div>
+      <div class="row"><span>图片</span><span>${job.completed_images}/${job.total_images}</span></div>
+      <div class="actions" style="margin-block-start:1rem">
+        <button type="button" class="ghost" id="to-gallery">查看画廊</button>
+        <button type="button" class="ghost" id="to-jobs">全部任务</button>
       </div>
     </div>
-    <h2 class="section">Frames</h2>
+    <h2 class="section">帧</h2>
     <div class="panel">
       <table>
-        <thead><tr><th>ID</th><th>STATUS</th><th>SEED</th><th>SIZE</th><th>TIME</th></tr></thead>
+        <caption>该任务生成的帧</caption>
+        <thead>
+          <tr>
+            <th scope="col">编号</th>
+            <th scope="col">状态</th>
+            <th scope="col">种子</th>
+            <th scope="col">尺寸</th>
+            <th scope="col">耗时</th>
+          </tr>
+        </thead>
         <tbody>
           ${(detail.images || []).map((item) => `
             <tr>
-              <td class="mono">${item.id}</td>
-              <td><span class="pill ${item.status}">${item.status}</span></td>
-              <td class="mono">${item.seed}</td>
+              <td class="mono">${escapeHtml(item.id)}</td>
+              <td><span class="pill ${escapeHtml(item.status)}">${STATUS[item.status] || escapeHtml(item.status)}</span></td>
+              <td class="mono">${escapeHtml(item.seed)}</td>
               <td>${item.width}×${item.height}</td>
-              <td>${item.duration_ms != null ? (item.duration_ms / 1000).toFixed(2) + "s" : "—"}</td>
-            </tr>`).join("")}
+              <td>${item.duration_ms != null ? (item.duration_ms / 1000).toFixed(2) + " 秒" : "—"}</td>
+            </tr>`).join("") || `<tr><td colspan="5">还没有帧。</td></tr>`}
         </tbody>
       </table>
     </div>
   `;
-  document.getElementById("to-gallery").onclick = () => { location.hash = `#/gallery?job=${job.id}`; };
-  document.getElementById("to-jobs").onclick = () => { location.hash = "#/jobs"; };
+  document.getElementById("to-gallery").addEventListener("click", () => {
+    location.hash = `#/gallery?job=${job.id}`;
+  });
+  document.getElementById("to-jobs").addEventListener("click", () => {
+    location.hash = "#/jobs";
+  });
 }
 
 async function galleryPage(params) {
@@ -346,33 +471,41 @@ async function galleryPage(params) {
   if (q) query.set("q", q);
   if (recipe) query.set("recipe", recipe);
   const data = await api(`/api/gallery?${query}`);
+  document.title = "画廊 · sdcpp-modal";
   main.innerHTML = `
-    <h1>Gallery</h1>
-    <p class="lede">${data.total} local images. Hover a card for prompt and seed.</p>
-    <form class="toolbar" id="filters">
-      <input name="q" placeholder="search prompt" value="${q}" />
-      <input name="job" placeholder="job id" value="${job}" />
-      <input name="recipe" placeholder="recipe" value="${recipe}" />
-      <button type="submit" class="ghost">Filter</button>
+    <h1>画廊</h1>
+    <p class="lede">本地已有 ${data.total} 张图。点开卡片可看提示词和种子。</p>
+    <form class="toolbar" id="filters" method="get" action="#/gallery">
+      <div class="field">
+        <label class="field-label" for="filter-q">搜索提示词</label>
+        <input id="filter-q" name="q" value="${escapeHtml(q)}" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="filter-job">任务编号</label>
+        <input id="filter-job" name="job" value="${escapeHtml(job)}" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="filter-recipe">配方</label>
+        <input id="filter-recipe" name="recipe" value="${escapeHtml(recipe)}" />
+      </div>
+      <button type="submit" class="ghost">筛选</button>
     </form>
     <div class="gallery">
       ${data.items.map((image) => `
-        <article class="card" data-id="${image.id}">
-          <img src="/api/images/${image.id}/file" alt="" />
-          <div class="cap">${image.prompt}</div>
-          <div class="hover">
-            <div>${image.prompt}</div>
-            <div class="mono" style="margin-top:10px">seed ${image.seed}<br>${image.recipe}<br>${image.width}×${image.height}<br>${image.latency_ms ? (image.latency_ms / 1000).toFixed(2) + "s" : ""}</div>
-          </div>
-        </article>`).join("") || "<p>No images yet. Generate something.</p>"}
+        <article>
+          <button type="button" class="card" data-id="${escapeHtml(image.id)}">
+            <img src="/api/images/${escapeHtml(image.id)}/file" alt="${escapeHtml(image.prompt)}" width="${image.width || 512}" height="${image.height || 1024}" />
+            <span class="cap">${escapeHtml(image.prompt)}</span>
+          </button>
+        </article>`).join("") || "<p>还没有图片。去生成一页。</p>"}
     </div>
-    <div class="pager">
-      <button class="ghost" ${page <= 1 ? "disabled" : ""} id="prev">Prev</button>
-      <span>page ${data.page}</span>
-      <button class="ghost" ${page * per >= data.total ? "disabled" : ""} id="next">Next</button>
-    </div>
+    <nav class="pager" aria-label="画廊分页">
+      <button type="button" class="ghost" ${page <= 1 ? "disabled" : ""} id="prev">上一页</button>
+      <span>第 ${data.page} 页</span>
+      <button type="button" class="ghost" ${page * per >= data.total ? "disabled" : ""} id="next">下一页</button>
+    </nav>
   `;
-  document.getElementById("filters").onsubmit = (event) => {
+  document.getElementById("filters").addEventListener("submit", (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
     location.hash = `#/gallery?${new URLSearchParams({
@@ -381,75 +514,85 @@ async function galleryPage(params) {
       recipe: form.get("recipe") || "",
       page: "1",
     })}`;
-  };
-  document.getElementById("prev").onclick = () => {
+  });
+  document.getElementById("prev").addEventListener("click", () => {
     params.set("page", String(page - 1));
     location.hash = `#/gallery?${params}`;
-  };
-  document.getElementById("next").onclick = () => {
+  });
+  document.getElementById("next").addEventListener("click", () => {
     params.set("page", String(page + 1));
     location.hash = `#/gallery?${params}`;
-  };
+  });
   main.querySelectorAll(".card").forEach((card) => {
-    card.onclick = () => openLightbox(card.dataset.id);
+    card.addEventListener("click", () => openLightbox(card.dataset.id));
   });
 }
 
 async function openLightbox(imageId) {
   const image = await api(`/api/images/${imageId}`);
-  lightbox.classList.remove("hidden");
   lightbox.innerHTML = `
-    <img src="/api/images/${image.id}/file" alt="" />
-    <div class="meta">
-      <h2>Frame</h2>
-      <p>${image.prompt}</p>
-      <dl>
-        <dt>Seed</dt><dd class="mono">${image.seed}</dd>
-        <dt>Recipe</dt><dd>${image.recipe}</dd>
-        <dt>Steps</dt><dd>${image.steps}</dd>
-        <dt>Size</dt><dd>${image.width} × ${image.height}</dd>
-        <dt>Time</dt><dd>${image.latency_ms ? (image.latency_ms / 1000).toFixed(2) + "s" : "—"}</dd>
-        <dt>Job</dt><dd class="mono"><a href="#/job/${image.job_id}">${image.job_id}</a></dd>
-      </dl>
-      <div class="actions" style="margin-top:18px">
-        <button id="copy">Copy prompt</button>
-        <button class="ghost" id="regen">Regenerate</button>
-        <a class="btn ghost" href="/api/images/${image.id}/file" download>Download</a>
-        <button class="ghost" id="close">Close</button>
+    <div class="lightbox-grid">
+      <img src="/api/images/${escapeHtml(image.id)}/file" alt="${escapeHtml(image.prompt)}" width="${image.width || 512}" height="${image.height || 1024}" />
+      <div class="meta">
+        <h2 id="lightbox-title">帧</h2>
+        <p>${escapeHtml(image.prompt)}</p>
+        <dl>
+          <dt>种子</dt><dd class="mono">${escapeHtml(image.seed)}</dd>
+          <dt>配方</dt><dd>${escapeHtml(image.recipe)}</dd>
+          <dt>步数</dt><dd>${escapeHtml(image.steps)}</dd>
+          <dt>尺寸</dt><dd>${image.width} × ${image.height}</dd>
+          <dt>耗时</dt><dd>${image.latency_ms ? (image.latency_ms / 1000).toFixed(2) + " 秒" : "—"}</dd>
+          <dt>任务</dt><dd class="mono"><a href="#/job/${escapeHtml(image.job_id)}">${escapeHtml(image.job_id)}</a></dd>
+        </dl>
+        <div class="actions" style="margin-block-start:1rem">
+          <button type="button" id="copy">复制提示词</button>
+          <button type="button" class="ghost" id="regen">再生成</button>
+          <a class="btn ghost" href="/api/images/${escapeHtml(image.id)}/file" download>下载</a>
+          <button type="button" class="ghost" id="close" value="close">关闭</button>
+        </div>
       </div>
     </div>
   `;
-  document.getElementById("close").onclick = () => lightbox.classList.add("hidden");
-  document.getElementById("copy").onclick = async () => navigator.clipboard.writeText(image.prompt);
-  document.getElementById("regen").onclick = async () => {
-    const job = await api(`/api/images/${image.id}/regenerate`, { method: "POST" });
-    lightbox.classList.add("hidden");
-    location.hash = "#/jobs";
-    alert(`queued ${job.id}`);
-  };
+  if (typeof lightbox.showModal === "function") lightbox.showModal();
+  document.getElementById("close").addEventListener("click", () => lightbox.close());
+  document.getElementById("copy").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(image.prompt);
+    showNotice("提示词已复制。");
+  });
+  document.getElementById("regen").addEventListener("click", async () => {
+    try {
+      const job = await api(`/api/images/${image.id}/regenerate`, { method: "POST" });
+      lightbox.close();
+      location.hash = "#/jobs";
+      showNotice(`已排队 ${job.id}`);
+    } catch (error) {
+      showNotice(error.message, "bad");
+    }
+  });
 }
 
 async function settingsPage(meta) {
   const doctor = await api("/api/doctor");
+  document.title = "设置 · sdcpp-modal";
   main.innerHTML = `
-    <h1>Settings</h1>
-    <p class="lede">Local workbench. Weights stay on volume <code>sdcpp-models</code>. GPU default is L40S. A10 and A100 are blocked.</p>
+    <h1>设置</h1>
+    <p class="lede">本地工作台。权重留在卷 <code>sdcpp-models</code>。默认显卡是 L40S。A10 与 A100 已禁用。</p>
     <div class="panel">
-      <div class="check"><span>Data dir</span><span class="mono">${meta.defaults.data_dir}</span></div>
-      <div class="check"><span>Default recipe</span><span>${meta.defaults.recipe}</span></div>
-      <div class="check"><span>Default GPU</span><span>${meta.defaults.gpu}</span></div>
-      <h2 class="section">Recipes</h2>
+      <div class="row"><span>数据目录</span><span class="mono">${escapeHtml(meta.defaults.data_dir)}</span></div>
+      <div class="row"><span>默认配方</span><span>${escapeHtml(meta.defaults.recipe)}</span></div>
+      <div class="row"><span>默认显卡</span><span>${escapeHtml(meta.defaults.gpu)}</span></div>
+      <h2 class="section">配方</h2>
       ${(meta.models || []).map((model) => `
-        <div class="check">
-          <span>${model.label}</span>
-          <span class="mono">${model.id} · ${model.width}×${model.height} · ${model.default_steps} steps</span>
+        <div class="row">
+          <span>${escapeHtml(model.label_zh || model.label)}</span>
+          <span class="mono">${escapeHtml(model.id)} · ${model.width}×${model.height} · ${model.default_steps} 步</span>
         </div>`).join("")}
-      <h2 class="section">Doctor</h2>
-      <div class="checks">
+      <h2 class="section">自检</h2>
+      <div>
         ${doctor.checks.map((check) => `
-          <div class="check">
-            <span>${check.name}</span>
-            <span class="${check.ok ? "ok" : "bad"}">${check.ok ? "✓" : "✗"} ${check.detail}</span>
+          <div class="row">
+            <span>${DOCTOR[check.name] || escapeHtml(check.name)}</span>
+            <span class="${check.ok ? "ok" : "bad"}">${check.ok ? "通过" : "失败"} · ${escapeHtml(check.detail)}</span>
           </div>`).join("")}
       </div>
     </div>
@@ -462,7 +605,9 @@ async function render(forced) {
   const page = forced || pageName || "generate";
   const params = new URLSearchParams(query || "");
   document.querySelectorAll("nav a").forEach((link) => {
-    link.classList.toggle("active", link.dataset.page === page || (page.startsWith("job/") && link.dataset.page === "jobs"));
+    const current = link.dataset.page === page || (page.startsWith("job/") && link.dataset.page === "jobs");
+    if (current) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
   });
   if (!state.meta) state.meta = await api("/api/meta");
   if (page === "generate") generatePage(state.meta);
@@ -476,17 +621,17 @@ async function render(forced) {
 
 window.addEventListener("hashchange", () => render());
 lightbox.addEventListener("click", (event) => {
-  if (event.target === lightbox) lightbox.classList.add("hidden");
+  if (event.target === lightbox) lightbox.close();
 });
 
 (async () => {
   try {
     const [doctor, meta] = await Promise.all([api("/api/doctor"), api("/api/meta")]);
     state.meta = meta;
-    railStatus.textContent = doctor.ready ? "local web · 7 recipes" : "setup incomplete";
+    railStatus.textContent = doctor.ready ? "本地网页 · 七个配方" : "设置未完成";
     railStatus.className = doctor.ready ? "rail-foot ok" : "rail-foot bad";
   } catch {
-    railStatus.textContent = "api offline";
+    railStatus.textContent = "接口离线";
   }
   await render();
 })();
