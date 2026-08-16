@@ -4,7 +4,7 @@ import argparse
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from .recipes import apply_recipe, recipe_uris
+from .recipes import all_recipe_uris, apply_recipe, recipe_uris
 
 
 def parse_extra_cli(argv: Sequence[str]) -> dict[str, Any]:
@@ -107,6 +107,7 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
 
     pull = sub.add_parser("pull", help="download model URIs onto Modal volume sdcpp-models")
     pull.add_argument("--recipe", default="", help="also pull files from a bundled recipe")
+    pull.add_argument("--all", action="store_true", help="pull every bundled recipe")
     pull.add_argument("uris", nargs="*", help="hf://, civitai://, or https:// URI")
 
     put = sub.add_parser("put", help="upload a local file onto volume sdcpp-models")
@@ -138,7 +139,11 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
     generate.add_argument("--control-net", dest="control_net", default="")
     generate.add_argument("--taesd", default="")
     generate.add_argument("--upscale-model", dest="upscale_model", default="")
-    generate.add_argument("--recipe", default="sd15", help="bundled recipe (default: sd15)")
+    generate.add_argument(
+        "--recipe",
+        default="sd15",
+        help="bundled recipe: ideogram4, flux2-klein, flux2-dev, z-image-turbo, sdxl-turbo, sd2, sd15",
+    )
     generate.add_argument("-o", "--output", default="output.png", help="local output path")
     generate.add_argument("-W", "--width", type=int, default=0)
     generate.add_argument("-H", "--height", type=int, default=0)
@@ -178,13 +183,15 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
     uris = list(getattr(args, "uris", []) or [])
     recipe = getattr(args, "recipe", "") or ""
     if args.action == "pull":
-        if recipe:
+        if getattr(args, "all", False):
+            uris = all_recipe_uris() + uris
+        elif recipe:
             try:
                 uris = recipe_uris(recipe) + uris
             except KeyError as exc:
                 parser.error(str(exc))
         if not uris:
-            parser.error("pull requires at least one URI or --recipe")
+            parser.error("pull requires at least one URI, --recipe, or --all")
 
     return CliCommand(
         action=args.action,

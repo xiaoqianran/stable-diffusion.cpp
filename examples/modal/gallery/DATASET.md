@@ -17,13 +17,15 @@ Layout is one folder per model family. Future models do not need a code change: 
 
 ```
 images/
+  ideogram4/<id>.png
+  flux2-klein/<id>.png
+  flux2-dev/<id>.png
+  z-image-turbo/<id>.png
+  sdxl-turbo/<id>.png
+  sd2/<id>.png
   sd15/<id>.png
-  sd15/<id>.json
-  sdxl/<id>.png
-  flux/<id>.png
-  wan/<id>.png
 ```
 
-`models.json` lists known families (SD, FLUX, Qwen, Wan, ...). Unknown slugs still render on Pages under Custom.
+`models.json` lists the seven bundled families. Unknown slugs still render on Pages under Custom.
 
 Each sidecar also records the prompt plus run facts used on the Pages card: `duration_ms`, `gpu_name`, `cuda_version`, `torch_version`, and extras such as NVIDIA driver, sd-cli version, Python, Modal GPU type, and the container image.
