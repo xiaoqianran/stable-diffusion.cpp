@@ -101,7 +101,7 @@ def _convert_image() -> modal.Image:
     script = HERE.parent.parent / "scripts" / "convert_fp8_scale_to_bf16.py"
     return _with_hooks(
         modal.Image.debian_slim(python_version="3.12")
-        .pip_install("safetensors", "torch")
+        .pip_install("numpy", "safetensors", "torch")
         .add_local_file(str(script), remote_path="/opt/convert_fp8_scale_to_bf16.py")
     )
 
@@ -251,10 +251,16 @@ def convert_fp8_to_bf16(src: str, dest: str) -> dict:
             dest,
             "--overwrite",
         ],
+        capture_output=True,
+        text=True,
         check=False,
     )
+    if completed.stdout:
+        print(completed.stdout, flush=True)
+    if completed.stderr:
+        print(completed.stderr, flush=True)
     if completed.returncode != 0 or not output.exists():
-        raise RuntimeError(f"fp8 to bf16 failed for {src}")
+        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or f"fp8 to bf16 failed for {src}")
     volume.commit()
     return {"path": dest, "bytes": output.stat().st_size, "skipped": False}
 
