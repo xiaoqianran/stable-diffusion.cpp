@@ -16,7 +16,9 @@ Context Options:
   --llm <string>                                path to the llm text encoder
   --llm_vision <string>                         path to the llm vit
   --diffusion-model <string>                    path to the standalone diffusion model
+  --uncond-diffusion-model <string>             path to the standalone unconditional diffusion model
   --vae <string>                                path to standalone vae model
+  --diffusion-fa                                use flash attention for diffusion
   --taesd <string>                              path to taesd
   --control-net <string>                        path to control net model
   --upscale-model <string>                      path to esrgan model

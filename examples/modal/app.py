@@ -63,7 +63,11 @@ def _with_hooks(image: modal.Image) -> modal.Image:
 
 
 def _cpu_image() -> modal.Image:
-    return _with_hooks(modal.Image.debian_slim(python_version="3.12"))
+    return _with_hooks(
+        modal.Image.debian_slim(python_version="3.12")
+        .apt_install("aria2")
+        .pip_install("huggingface_hub")
+    )
 
 
 def _cuda_image() -> modal.Image:
@@ -96,6 +100,14 @@ def _idle_kwargs() -> dict:
     }
 
 
+def _pull_workers() -> int:
+    raw = os.environ.get("SDCPP_PULL_WORKERS", "4")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 4
+
+
 def _pull_uris(uris: list[str]) -> list[dict]:
     labeled = {f"uri_{index}": uri for index, uri in enumerate(uris)}
     resolved = resolve_artifacts(
@@ -103,6 +115,7 @@ def _pull_uris(uris: list[str]) -> list[dict]:
         cache_dir=MODEL_ROOT,
         artifact_fields=set(labeled),
         allow_download=True,
+        max_workers=_pull_workers(),
     )
     rows = []
     for index, uri in enumerate(uris):
@@ -196,7 +209,7 @@ def probe() -> dict:
 
 @gpu_app.cls(
     gpu=GPU,
-    timeout=60 * 60,
+    timeout=2 * 60 * 60,
     volumes={str(MODEL_ROOT): volume},
     **_idle_kwargs(),
 )

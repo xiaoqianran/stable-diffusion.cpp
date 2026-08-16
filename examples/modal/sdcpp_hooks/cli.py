@@ -34,6 +34,7 @@ class CliCommand:
     recipe: str = "sd15"
     model: str = ""
     diffusion_model: str = ""
+    uncond_diffusion_model: str = ""
     vae: str = ""
     clip_l: str = ""
     clip_g: str = ""
@@ -69,6 +70,7 @@ class CliCommand:
             negative_prompt=self.negative_prompt or None,
             model=self.model or None,
             diffusion_model=self.diffusion_model or None,
+            uncond_diffusion_model=self.uncond_diffusion_model or None,
             vae=self.vae or None,
             clip_l=self.clip_l or None,
             clip_g=self.clip_g or None,
@@ -118,6 +120,12 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
     generate.add_argument("-n", "--negative-prompt", default="", help="negative prompt")
     generate.add_argument("-m", "--model", default="", help="model URI; overrides recipe model")
     generate.add_argument("--diffusion-model", default="", help="standalone diffusion model URI")
+    generate.add_argument(
+        "--uncond-diffusion-model",
+        dest="uncond_diffusion_model",
+        default="",
+        help="unconditional diffusion model URI (Ideogram4 CFG)",
+    )
     generate.add_argument("--vae", default="", help="VAE URI")
     generate.add_argument("--clip-l", dest="clip_l", default="")
     generate.add_argument("--clip-g", dest="clip_g", default="")
@@ -187,6 +195,7 @@ def parse_argv(argv: Sequence[str]) -> CliCommand:
         recipe=recipe or "sd15",
         model=getattr(args, "model", "") or "",
         diffusion_model=getattr(args, "diffusion_model", "") or "",
+        uncond_diffusion_model=getattr(args, "uncond_diffusion_model", "") or "",
         vae=getattr(args, "vae", "") or "",
         clip_l=getattr(args, "clip_l", "") or "",
         clip_g=getattr(args, "clip_g", "") or "",

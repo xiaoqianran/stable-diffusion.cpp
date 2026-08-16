@@ -49,6 +49,13 @@ python3 sdcpp_modal.py cost --official
 
 `generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
 
+CPU pulls use `aria2c` (`-x 16 -s 16 -c -k 1M`) when it is on the image, then the Hugging Face CLI, then urllib. Several missing files download in parallel (`SDCPP_PULL_WORKERS`, default 4). Tokens stay in headers or `CIVITAI_TOKEN` query params and are redacted in logs.
+
+```bash
+python3 sdcpp_modal.py pull --recipe ideogram4
+python3 sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
+```
+
 Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
 
 Cost tracking lives in `sdcpp_hooks/cost.py` and `sdcpp_hooks/modal_meter.py`, not in `sd-cli`. Every `app.run()` and `.remote()` is a billed span. GPU containers also record enter→exit lifetime, including idle until scale-to-zero. Estimates use `modal.Workspace.billing.rates()` when available, otherwise a snapshot of those rates. `cost --official` prints the workspace invoice summary. Session and remote windows overlap, so the ledger does not add them together.
@@ -88,6 +95,7 @@ Then pass `--model /models/hf/local/v1-5-pruned-emaonly.safetensors`.
 | `SDCPP_GPU` | `L4` |
 | `SDCPP_IDLE_SECONDS` | `10` (CPU and GPU scale to zero after this idle window) |
 | `SDCPP_SECRET` | `sdcpp-tokens` (used only if that Modal secret exists) |
+| `SDCPP_PULL_WORKERS` | `4` (parallel CPU downloads) |
 | `HF_ENDPOINT` | `https://huggingface.co` |
 | `SDCPP_GALLERY_DATASET` | `seachen/stable-diffusion-cpp-gallery` |
 | `SDCPP_GITHUB_REPO` | `xiaoqianran/stable-diffusion.cpp` |

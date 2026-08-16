@@ -50,6 +50,20 @@ RECIPES: dict[str, dict[str, Any]] = {
         "steps": 8,
         "cfg_scale": 7.0,
     },
+    "ideogram4": {
+        "diffusion_model": "hf://ideogram-ai/ideogram-4-fp8/transformer/diffusion_pytorch_model.safetensors",
+        "uncond_diffusion_model": "hf://ideogram-ai/ideogram-4-fp8/unconditional_transformer/diffusion_pytorch_model.safetensors",
+        "vae": "hf://black-forest-labs/FLUX.2-dev/ae.safetensors",
+        "llm": "hf://unsloth/Qwen3-VL-8B-Instruct-GGUF/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+        "width": 1024,
+        "height": 1024,
+        "steps": 20,
+        "cfg_scale": 4.0,
+        "extra_cli": {
+            "--diffusion-fa": True,
+            "--offload-to-cpu": True,
+        },
+    },
 }
 
 
@@ -61,6 +75,7 @@ def recipe_uris(name: str) -> list[str]:
     for key in (
         "model",
         "diffusion_model",
+        "uncond_diffusion_model",
         "vae",
         "clip_l",
         "clip_g",

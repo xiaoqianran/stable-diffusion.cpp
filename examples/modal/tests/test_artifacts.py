@@ -5,6 +5,7 @@ import pytest
 from sdcpp_hooks.artifacts import (
     ArtifactMissingError,
     ArtifactRef,
+    cache_is_complete,
     collect_fetchable_uris,
     is_fetchable,
     resolve_artifacts,
@@ -173,3 +174,65 @@ def test_resolve_artifacts_can_load_cache_without_downloading(tmp_path):
     )
 
     assert resolved["model"] == dest
+
+
+def test_hf_cache_path_keeps_nested_repo_paths(tmp_path):
+    cond = ArtifactRef.parse(
+        "hf://ideogram-ai/ideogram-4-fp8/transformer/diffusion_pytorch_model.safetensors"
+    )
+    uncond = ArtifactRef.parse(
+        "hf://ideogram-ai/ideogram-4-fp8/unconditional_transformer/diffusion_pytorch_model.safetensors"
+    )
+
+    assert cond.cache_path(tmp_path) != uncond.cache_path(tmp_path)
+    assert cond.cache_path(tmp_path).as_posix().endswith(
+        "transformer/diffusion_pytorch_model.safetensors"
+    )
+
+
+def test_cache_is_complete_treats_aria2_control_file_as_partial(tmp_path):
+    dest = tmp_path / "model.safetensors"
+    dest.write_bytes(b"partial")
+    assert cache_is_complete(dest)
+    dest.with_name(dest.name + ".aria2").write_text("in-progress")
+    assert not cache_is_complete(dest)
+
+
+def test_resolve_artifacts_can_download_in_parallel(tmp_path):
+    seen = []
+
+    def fetch(url, dest, headers):
+        seen.append(url)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(url.encode())
+        return dest
+
+    resolved = resolve_artifacts(
+        {
+            "model": "hf://org/repo/a.safetensors",
+            "vae": "hf://org/repo/vae.safetensors",
+        },
+        cache_dir=tmp_path,
+        fetch=fetch,
+        max_workers=2,
+    )
+
+    assert resolved["model"].read_bytes() == b"https://huggingface.co/org/repo/resolve/main/a.safetensors"
+    assert resolved["vae"].read_bytes() == b"https://huggingface.co/org/repo/resolve/main/vae.safetensors"
+    assert len(seen) == 2
+
+
+def test_collect_fetchable_uris_includes_uncond_diffusion_model():
+    uris = collect_fetchable_uris(
+        {
+            "diffusion_model": "hf://org/repo/cond.safetensors",
+            "uncond_diffusion_model": "hf://org/repo/uncond.safetensors",
+            "llm": "hf://org/repo/llm.gguf",
+        }
+    )
+
+    assert uris == [
+        "hf://org/repo/cond.safetensors",
+        "hf://org/repo/uncond.safetensors",
+        "hf://org/repo/llm.gguf",
+    ]

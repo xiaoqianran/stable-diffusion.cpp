@@ -75,6 +75,28 @@ def test_parse_generate_can_use_a_recipe_without_an_explicit_model():
     assert command.to_payload()["width"] == 512
 
 
+def test_parse_generate_accepts_ideogram4_recipe():
+    command = parse_argv(["generate", "-p", '{"high_level_description":"a cat"}', "--recipe", "ideogram4"])
+    payload = command.to_payload()
+
+    assert payload["model"] is None
+    assert "ideogram-4-fp8/transformer/" in payload["diffusion_model"]
+    assert "unconditional_transformer/" in payload["uncond_diffusion_model"]
+    assert payload["llm"].endswith("Qwen3-VL-8B-Instruct-Q4_K_M.gguf")
+    assert payload["vae"].endswith("ae.safetensors")
+    assert payload["width"] == 1024
+    assert payload["extra_cli"]["--diffusion-fa"] is True
+    assert payload["extra_cli"]["--offload-to-cpu"] is True
+
+
+def test_parse_pull_recipe_includes_ideogram4_uncond():
+    command = parse_argv(["pull", "--recipe", "ideogram4"])
+
+    assert any("unconditional_transformer" in uri for uri in command.uris)
+    assert any("Qwen3-VL-8B-Instruct-Q4_K_M.gguf" in uri for uri in command.uris)
+    assert len(command.uris) == 4
+
+
 def test_parse_generate_accepts_the_five_new_recipes():
     recipes = {
         "sd2": "Manojb/stable-diffusion-2-1-base",
@@ -111,6 +133,8 @@ def test_parse_generate_forwards_sd_cli_artifact_and_extra_flags():
             "a cat",
             "--vae",
             "hf://org/repo/vae.safetensors",
+            "--uncond-diffusion-model",
+            "hf://org/repo/uncond.safetensors",
             "--control-net",
             "hf://org/repo/control.safetensors",
             "--offload-to-cpu",
@@ -121,6 +145,7 @@ def test_parse_generate_forwards_sd_cli_artifact_and_extra_flags():
 
     payload = command.to_payload()
     assert payload["vae"] == "hf://org/repo/vae.safetensors"
+    assert payload["uncond_diffusion_model"] == "hf://org/repo/uncond.safetensors"
     assert payload["control_net"] == "hf://org/repo/control.safetensors"
     assert payload["extra_cli"]["--offload-to-cpu"] is True
     assert payload["extra_cli"]["--type"] == "f16"
