@@ -10,8 +10,8 @@ images/<model-id>/<id>.png
 images/<model-id>/<id>.json
 ```
 
-`models.json` lists SD, FLUX, Qwen, Wan, and the other families this repo
-already documents. A future model only needs `--model-id its-slug`.
+`models.json` lists the seven bundled Modal recipes. A future model only
+needs `--model-id its-slug`.
 
 Build the paginated site locally:
 

@@ -35,10 +35,13 @@ Each model family has its own folder. Unknown future models just get a new slug 
 
 ```
 images/
+  ideogram4/<id>.png
+  flux2-klein/<id>.png
+  flux2-dev/<id>.png
+  z-image-turbo/<id>.png
+  sdxl-turbo/<id>.png
+  sd2/<id>.png
   sd15/<id>.png
-  sd15/<id>.json
-  flux/<id>.png
-  wan/<id>.png
 ```
 
 Sidecar JSON keeps prompt, seed, steps, size, run duration, GPU name, CUDA version, and torch version. GitHub Pages rebuilds a paginated gallery from these files.

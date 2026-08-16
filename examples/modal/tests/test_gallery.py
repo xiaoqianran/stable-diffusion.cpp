@@ -69,7 +69,7 @@ def test_build_site_writes_model_pages_and_pagination(tmp_path):
     assert (out / "page" / "2.html").exists()
     assert (out / "model" / "sd15" / "index.html").exists()
     assert (out / "model" / "sd15" / "page" / "2.html").exists()
-    assert (out / "model" / "flux" / "index.html").exists()
+    assert (out / "model" / "ideogram4" / "index.html").exists()
     html = (out / "index.html").read_text(encoding="utf-8")
     assert "prompt 2" in html
     assert "Page 1 / 2" in html

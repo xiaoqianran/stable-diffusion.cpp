@@ -102,20 +102,48 @@ def test_parse_pull_recipe_includes_ideogram4_uncond():
     assert len(command.uris) == 4
 
 
-def test_parse_generate_accepts_the_five_new_recipes():
-    recipes = {
-        "sd2": "Manojb/stable-diffusion-2-1-base",
-        "sd-turbo": "stabilityai/sd-turbo",
-        "sdxl-turbo": "stabilityai/sdxl-turbo",
-        "ssd-1b": "segmind/SSD-1B",
-        "dreamlike-photoreal": "dreamlike-art/dreamlike-photoreal-2.0",
+def test_parse_generate_accepts_the_seven_bundled_recipes():
+    from sdcpp_hooks.recipes import RECIPES
+
+    assert set(RECIPES) == {
+        "ideogram4",
+        "flux2-klein",
+        "flux2-dev",
+        "z-image-turbo",
+        "sdxl-turbo",
+        "sd2",
+        "sd15",
     }
-    for name, marker in recipes.items():
+    markers = {
+        "sd2": ("model", "Manojb/stable-diffusion-2-1-base"),
+        "sdxl-turbo": ("model", "stabilityai/sdxl-turbo"),
+        "sd15": ("model", "stable-diffusion-v1-5"),
+        "ideogram4": ("diffusion_model", "leejet/ideogram-4-GGUF"),
+        "flux2-klein": ("diffusion_model", "FLUX.2-klein-9B-GGUF"),
+        "flux2-dev": ("diffusion_model", "city96/FLUX.2-dev-gguf"),
+        "z-image-turbo": ("diffusion_model", "Z-Image-Turbo-GGUF"),
+    }
+    for name, (field, marker) in markers.items():
         command = parse_argv(["generate", "-p", "a test image", "--recipe", name])
         payload = command.to_payload()
-        assert marker in payload["model"]
-        assert payload["width"] == 512
+        assert marker in (payload[field] or "")
+        assert payload["width"]
         assert payload["steps"]
+
+
+def test_parse_pull_all_dedupes_shared_vae():
+    command = parse_argv(["pull", "--all"])
+
+    assert command.action == "pull"
+    assert any("ideogram4-Q4_0.gguf" in uri for uri in command.uris)
+    assert any("flux-2-klein-9b-Q4_0.gguf" in uri for uri in command.uris)
+    assert any("flux2-dev-Q4_K_S.gguf" in uri for uri in command.uris)
+    assert any("z_image_turbo-Q3_K.gguf" in uri for uri in command.uris)
+    assert any("Qwen3-8B-Q4_K_M.gguf" in uri for uri in command.uris)
+    assert any("Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf" in uri for uri in command.uris)
+    assert any("Qwen3-4B-Instruct-2507-Q4_K_M.gguf" in uri for uri in command.uris)
+    assert any("FLUX.1-schnell" in uri for uri in command.uris)
+    assert sum("FLUX.2-dev/ae.safetensors" in uri for uri in command.uris) == 1
 
 
 def test_recipe_extra_cli_merges_with_user_flags():
