@@ -109,7 +109,28 @@ Artificial Analysis text-to-image Elo is from the [open-weights leaderboard](htt
 
 Shared FLUX.2 VAE (gated): `hf/black-forest-labs/FLUX.2-dev/main/ae.safetensors`. Used by Ideogram 4.0, FLUX.2 [klein], and FLUX.2 [dev]. Z-Image Turbo uses the Flux.1 schnell VAE, not the Flux.2 VAE. Qwen3-8B (klein) is not Qwen3-VL-8B (Ideogram4).
 
-GGUF diffusion files still need their VAE and text-encoder companions. `pull --all` is the CPU path that fetches the full set. Approximate new download if the volume is empty: Ideogram4 pair + VL-8B + klein 9B + Qwen3-8B + FLUX.2-dev Q4_K_S (~19 GB) + Mistral 24B Q4_K_M (~14 GB) + Z-Image Q3_K + Qwen3-4B + two VAEs + the three single-file SD checkpoints.
+GGUF diffusion files still need their VAE and text-encoder companions. `pull --all` is the CPU path that fetches the full set.
+
+### Volume inventory (2026-08-16)
+
+CPU `pull --all` on volume `sdcpp-models` left only these weight files (77.60 GiB). Leftover FLUX.1-dev and the old extra recipes were deleted.
+
+| Path under `/models/` | Bytes | Size |
+| --- | ---: | ---: |
+| `hf/leejet/ideogram-4-GGUF/main/ideogram4-Q4_0.gguf` | 5643820832 | 5.26 GiB |
+| `hf/leejet/ideogram-4-GGUF/main/ideogram4_uncond-Q4_0.gguf` | 5643820832 | 5.26 GiB |
+| `hf/unsloth/Qwen3-VL-8B-Instruct-GGUF/main/Qwen3-VL-8B-Instruct-Q4_K_M.gguf` | 5027785568 | 4.68 GiB |
+| `hf/black-forest-labs/FLUX.2-dev/main/ae.safetensors` | 336211292 | 0.31 GiB |
+| `hf/leejet/FLUX.2-klein-9B-GGUF/main/flux-2-klein-9b-Q4_0.gguf` | 5616208032 | 5.23 GiB |
+| `hf/unsloth/Qwen3-8B-GGUF/main/Qwen3-8B-Q4_K_M.gguf` | 5027784512 | 4.68 GiB |
+| `hf/city96/FLUX.2-dev-gguf/main/flux2-dev-Q4_K_S.gguf` | 19299128288 | 17.97 GiB |
+| `hf/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/main/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf` | 14333922848 | 13.35 GiB |
+| `hf/leejet/Z-Image-Turbo-GGUF/main/z_image_turbo-Q3_K.gguf` | 3143559104 | 2.93 GiB |
+| `hf/black-forest-labs/FLUX.1-schnell/main/ae.safetensors` | 335304388 | 0.31 GiB |
+| `hf/unsloth/Qwen3-4B-Instruct-2507-GGUF/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | 2497281120 | 2.33 GiB |
+| `hf/stabilityai/sdxl-turbo/main/sd_xl_turbo_1.0_fp16.safetensors` | 6938081905 | 6.46 GiB |
+| `hf/Manojb/stable-diffusion-2-1-base/main/v2-1_512-ema-pruned.safetensors` | 5214604494 | 4.86 GiB |
+| `hf/stable-diffusion-v1-5/stable-diffusion-v1-5/main/v1-5-pruned-emaonly.safetensors` | 4265146304 | 3.97 GiB |
 
 ```bash
 python3 sdcpp_modal.py pull --all
