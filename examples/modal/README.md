@@ -335,7 +335,7 @@ per-second gpu L4 $0.000226087/s  (0.80000/h)
 per-second gpu RTX-PRO-6000 $0.000845531/s  (3.03000/h)
 ```
 
-工作台读同一本账：
+工作台读同一本账。`GET /api/cost` 是全部 traces；`GET /api/cost?job_id=` 只看一个任务：
 
 ```bash
 curl -s 'http://127.0.0.1:7860/api/cost' | python3 -m json.tool
