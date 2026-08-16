@@ -170,8 +170,9 @@ function formPayload(form) {
 
 function money(value) {
   if (value == null || value === "") return "—";
-  const text = String(value);
-  return text.startsWith("$") ? text : `$${text}`;
+  const text = String(value).replace(/^\$/, "");
+  if (Number(text) === 0) return "$0";
+  return `$${text}`;
 }
 
 function jobCostLabel(job) {
