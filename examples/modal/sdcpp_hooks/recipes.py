@@ -14,6 +14,12 @@ IDEOGRAM4_CONVERT_RULES = (
     "layers.*feed_forward.*weight={quant}"
 )
 
+# Official sd.cpp GGUF pair. Do not convert fp8 locally unless this repo is missing.
+IDEOGRAM4_FP8 = {
+    "diffusion_model": "hf://ideogram-ai/ideogram-4-fp8/transformer/diffusion_pytorch_model.safetensors",
+    "uncond_diffusion_model": "hf://ideogram-ai/ideogram-4-fp8/unconditional_transformer/diffusion_pytorch_model.safetensors",
+}
+
 
 RECIPES: dict[str, dict[str, Any]] = {
     "sd15": {
@@ -61,8 +67,8 @@ RECIPES: dict[str, dict[str, Any]] = {
         "cfg_scale": 7.0,
     },
     "ideogram4": {
-        "diffusion_model": "hf://ideogram-ai/ideogram-4-fp8/transformer/diffusion_pytorch_model.safetensors",
-        "uncond_diffusion_model": "hf://ideogram-ai/ideogram-4-fp8/unconditional_transformer/diffusion_pytorch_model.safetensors",
+        "diffusion_model": "hf://leejet/ideogram-4-GGUF/ideogram4-Q4_0.gguf",
+        "uncond_diffusion_model": "hf://leejet/ideogram-4-GGUF/ideogram4_uncond-Q4_0.gguf",
         "vae": "hf://black-forest-labs/FLUX.2-dev/ae.safetensors",
         "llm": "hf://unsloth/Qwen3-VL-8B-Instruct-GGUF/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
         "width": 1024,
@@ -126,13 +132,12 @@ def apply_recipe(name: str, **overrides: Any) -> GenerateRequest:
 def convert_jobs(name: str, cache_dir: Path, quant: str = "q8_0") -> list[dict[str, str]]:
     if name != "ideogram4":
         raise KeyError(f"convert is only wired for ideogram4, not {name!r}")
-    recipe = RECIPES[name]
     jobs: list[dict[str, str]] = []
     for key, stem in (
         ("diffusion_model", "ideogram4"),
         ("uncond_diffusion_model", "ideogram4_uncond"),
     ):
-        src = ArtifactRef.parse(str(recipe[key])).cache_path(Path(cache_dir))
+        src = ArtifactRef.parse(str(IDEOGRAM4_FP8[key])).cache_path(Path(cache_dir))
         jobs.append(
             {
                 "src": str(src),

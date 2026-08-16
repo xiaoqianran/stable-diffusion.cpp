@@ -33,7 +33,6 @@ python3 sdcpp_modal.py ls
 python3 sdcpp_modal.py probe
 python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png --publish
 python3 sdcpp_modal.py publish cat.png --recipe sd15 -p "a lovely cat"
-python3 sdcpp_modal.py convert --recipe ideogram4
 python3 sdcpp_modal.py cost
 python3 sdcpp_modal.py cost --official
 ```
@@ -44,7 +43,7 @@ python3 sdcpp_modal.py cost --official
 | `put` | CPU | upload a small local file (init image, mask) to `uploads/` |
 | `ls` | CPU | list files already on that volume |
 | `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
-| `convert` | CPU torch, then GPU `sd-cli -M convert` | Ideogram4 fp8-scale → bf16 → GGUF |
+| `convert` | optional CPU fallback | only if a prebuilt GGUF is missing; prefer `pull --recipe ideogram4` |
 | `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
 | `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
 | `cost` | local (+ optional Modal API) | print the local billed-session ledger |
@@ -54,6 +53,7 @@ python3 sdcpp_modal.py cost --official
 CPU pulls use `aria2c` (`-x 16 -s 16 -c -k 1M`) when it is on the image, then the Hugging Face CLI, then urllib. Several missing files download in parallel (`SDCPP_PULL_WORKERS`, default 4). Tokens stay in headers or `CIVITAI_TOKEN` query params and are redacted in logs.
 
 ```bash
+python3 sdcpp_modal.py pull --recipe ideogram4
 python3 sdcpp_modal.py pull --recipe ideogram4
 python3 sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
 ```
