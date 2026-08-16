@@ -17,6 +17,7 @@ const DOCTOR = {
   recipes: "配方",
   data_dir: "数据目录",
   modal: "Modal",
+  api_proxy: "代理扩展",
   pillow: "Pillow",
 };
 

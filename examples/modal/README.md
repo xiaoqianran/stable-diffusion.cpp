@@ -10,9 +10,18 @@ Weights live on Modal Volume `sdcpp-models`. The default image is `ghcr.io/leeje
 
 ```bash
 cd examples/modal
-python3 -m pip install 'modal>=0.64' pytest
-modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
+uv sync
+uv run modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
 ```
+
+`uv sync` installs `modal[api-proxy-support]` plus the local web extras into `.venv`. After that, either `uv run python sdcpp_modal.py …` or `source .venv/bin/activate`. Remote CPU/GPU images stay on the official `sd-cli` container; they do not run `uv sync`. HTTP CONNECT / SOCKS proxies use the usual env vars:
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7890
+# or ALL_PROXY=socks5://127.0.0.1:1080
+```
+
+Set `MODAL_DISABLE_API_PROXY=1` to turn proxy support off. Without `uv`, the same extra is `python3 -m pip install 'modal[api-proxy-support]>=1.0' huggingface_hub fastapi uvicorn pillow python-multipart pytest httpx`.
 
 Public Hugging Face files work without a token. For gated models or Civitai:
 
@@ -67,9 +76,9 @@ The default GPU is `L40S`. `ideogram4` and `flux2-dev` default to `RTX-PRO-6000`
 The local workbench follows the [modal-sana](https://github.com/xiaoqianran/modal-sana) split: Interface / Core / Modal. `python3 sdcpp_modal.py web` starts FastAPI on `http://127.0.0.1:7860`. It is **not** `modal serve`. The page owns jobs, SSE progress, and a local gallery. GPU inference still goes through the existing `sdcpp-storage` + `sdcpp-cli` workers and the seven recipes.
 
 ```bash
-python3 -m pip install 'fastapi>=0.115' 'uvicorn>=0.30' pillow python-multipart
-python3 sdcpp_modal.py web
-python3 sdcpp_modal.py web --dry-run   # placeholder images, no GPU
+uv sync
+uv run python sdcpp_modal.py web
+uv run python sdcpp_modal.py web --dry-run   # placeholder images, no GPU
 ```
 
 Pages: **生成**, **批量**, **任务**, **成本**, **画廊**, **设置**. The static UI is plain HTML / CSS / JS talking to FastAPI, in Simplified Chinese. Default recipe is `z-image-turbo`. Selecting Ideogram 4 or FLUX.2 Dev also selects RTX PRO 6000. Job metadata lives in `~/.cache/sdcpp-modal/web/` (override with `SDCPP_WEB_DATA`). `--dry-run` or `SDCPP_WEB_DRY_RUN=1` writes prompt placeholders so the UI can be tested without Modal.
