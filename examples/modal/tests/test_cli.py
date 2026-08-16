@@ -80,8 +80,8 @@ def test_parse_generate_accepts_ideogram4_recipe():
     payload = command.to_payload()
 
     assert payload["model"] is None
-    assert "ideogram-4-fp8/transformer/" in payload["diffusion_model"]
-    assert "unconditional_transformer/" in payload["uncond_diffusion_model"]
+    assert "leejet/ideogram-4-GGUF/ideogram4-Q4_0.gguf" in payload["diffusion_model"]
+    assert payload["uncond_diffusion_model"].endswith("ideogram4_uncond-Q4_0.gguf")
     assert payload["llm"].endswith("Qwen3-VL-8B-Instruct-Q4_K_M.gguf")
     assert payload["vae"].endswith("ae.safetensors")
     assert payload["width"] == 1024
@@ -89,10 +89,15 @@ def test_parse_generate_accepts_ideogram4_recipe():
     assert payload["extra_cli"]["--offload-to-cpu"] is True
 
 
+def test_parse_convert_is_not_a_cli_command():
+    with pytest.raises(SystemExit):
+        parse_argv(["convert"])
+
+
 def test_parse_pull_recipe_includes_ideogram4_uncond():
     command = parse_argv(["pull", "--recipe", "ideogram4"])
 
-    assert any("unconditional_transformer" in uri for uri in command.uris)
+    assert any("ideogram4_uncond-Q4_0.gguf" in uri for uri in command.uris)
     assert any("Qwen3-VL-8B-Instruct-Q4_K_M.gguf" in uri for uri in command.uris)
     assert len(command.uris) == 4
 

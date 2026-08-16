@@ -51,8 +51,8 @@ RECIPES: dict[str, dict[str, Any]] = {
         "cfg_scale": 7.0,
     },
     "ideogram4": {
-        "diffusion_model": "hf://ideogram-ai/ideogram-4-fp8/transformer/diffusion_pytorch_model.safetensors",
-        "uncond_diffusion_model": "hf://ideogram-ai/ideogram-4-fp8/unconditional_transformer/diffusion_pytorch_model.safetensors",
+        "diffusion_model": "hf://leejet/ideogram-4-GGUF/ideogram4-Q4_0.gguf",
+        "uncond_diffusion_model": "hf://leejet/ideogram-4-GGUF/ideogram4_uncond-Q4_0.gguf",
         "vae": "hf://black-forest-labs/FLUX.2-dev/ae.safetensors",
         "llm": "hf://unsloth/Qwen3-VL-8B-Instruct-GGUF/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
         "width": 1024,

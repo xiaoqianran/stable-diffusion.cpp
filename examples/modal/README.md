@@ -56,6 +56,10 @@ python3 sdcpp_modal.py pull --recipe ideogram4
 python3 sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
 ```
 
+Do not convert Ideogram4 weights yourself. `pull --recipe ideogram4` downloads the prebuilt GGUF pair from [`leejet/ideogram-4-GGUF`](https://huggingface.co/leejet/ideogram-4-GGUF) (`ideogram4-Q4_0.gguf` and `ideogram4_uncond-Q4_0.gguf`), plus the FLUX.2 VAE and Qwen3-VL GGUF. There is no `convert` command in this CLI. The FLUX.2 VAE is gated, so set `HF_TOKEN`.
+
+The default GPU is `L40S`. A 24 GB `L4` can OOM on the diffusion compute buffer. `RTX6000` also works; A10 and A100 are blocked.
+
 Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
 
 Cost tracking lives in `sdcpp_hooks/cost.py` and `sdcpp_hooks/modal_meter.py`, not in `sd-cli`. Every `app.run()` and `.remote()` is a billed span. GPU containers also record enter→exit lifetime, including idle until scale-to-zero. Estimates use `modal.Workspace.billing.rates()` when available, otherwise a snapshot of those rates. `cost --official` prints the workspace invoice summary. Session and remote windows overlap, so the ledger does not add them together.
@@ -123,8 +127,6 @@ GitHub Actions workflow `.github/workflows/gallery-pages.yml` downloads that
 dataset and deploys a paginated gallery to GitHub Pages (12 images per page,
 filters for current and future model families):
 https://xiaoqianran.github.io/stable-diffusion.cpp/
-
-Ideogram4 fp8 weights expand to F16 on GPU. The default `L40S` has enough VRAM. A 24 GB `L4` can OOM on the diffusion compute buffer; `RTX6000` also works.
 
 ## Limits
 
