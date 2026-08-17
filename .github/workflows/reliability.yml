@@ -1,0 +1,85 @@
+name: Reliability
+
+on:
+  pull_request:
+    paths:
+      - "CMakeLists.txt"
+      - "tests/**"
+      - "src/**"
+      - "include/**"
+      - "examples/modal/**"
+      - "docker/Dockerfile.cuda"
+      - ".github/workflows/reliability.yml"
+      - ".github/workflows/modal-deploy.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "CMakeLists.txt"
+      - "tests/**"
+      - "src/**"
+      - "include/**"
+      - "examples/modal/**"
+      - "docker/Dockerfile.cuda"
+      - ".github/workflows/reliability.yml"
+      - ".github/workflows/modal-deploy.yml"
+
+concurrency:
+  group: reliability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - name: Build public API regression test
+        run: |
+          cmake -S . -B build-reliability \
+            -DSD_BUILD_SHARED_LIBS=ON \
+            -DSD_BUILD_TESTS=ON \
+            -DGGML_NATIVE=OFF \
+            -DSD_BUILD_SHARED_GGML_LIB=ON \
+            -DGGML_BACKEND_DL=ON \
+            -DGGML_CPU_ALL_VARIANTS=ON
+          cmake --build build-reliability --config Release --target sd-public-api-test --parallel 2
+          ctest --test-dir build-reliability --output-on-failure -R '^sd-public-api$'
+
+  cuda-image:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build immutable CUDA runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cuda
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}-cuda
