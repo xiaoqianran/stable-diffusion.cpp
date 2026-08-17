@@ -7,7 +7,6 @@ on:
     paths:
       - ".reliability-upload/**"
       - ".github/workflows/modal-python.yml"
-      - ".github/workflows/apply-reliability-patch.yml"
 
 permissions:
   contents: write
@@ -36,7 +35,10 @@ jobs:
           set -euo pipefail
           cat .reliability-upload/part-* | base64 -d | gzip -dc > /tmp/reliability.patch
           echo "dfd8a038c8d1845ddb40cb7def4062960e3e050089a64e2dd67710fdfe198a5c  /tmp/reliability.patch" | sha256sum -c -
-          git apply --binary --whitespace=nowarn /tmp/reliability.patch
+          git apply --binary --whitespace=nowarn \
+            --exclude=.github/workflows/build.yml \
+            --exclude=.github/workflows/modal-deploy.yml \
+            /tmp/reliability.patch
           git diff --check
       - name: Install uv
         run: python -m pip install uv
@@ -57,14 +59,13 @@ jobs:
           set -euo pipefail
           python -m compileall -q examples/modal
           g++ -std=c++17 -fsyntax-only -Iinclude tests/test_public_api.cpp
-      - name: Commit validated final patch
+      - name: Commit validated code patch
         shell: bash
         run: |
           set -euo pipefail
-          git checkout origin/master -- .github/workflows/modal-python.yml
-          rm -rf .reliability-upload .github/workflows/apply-reliability-patch.yml
+          rm -rf .reliability-upload
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add -A -- ':!.github/workflows/*'
           git commit -m "fix(modal): harden runtime integrity and durable jobs"
           git push origin HEAD:fix/reliability-hardening
