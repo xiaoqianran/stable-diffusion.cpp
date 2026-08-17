@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone CLI: pull weights onto Modal storage, then run sd-cli on GPU."""
+"""Standalone CLI: stage weights on CPU, then call persistent Modal workers."""
 
 from __future__ import annotations
 
@@ -8,22 +8,18 @@ import os
 import sys
 from pathlib import Path
 
-from app import (
-    SDEngine,
-    ensure_artifacts,
-    gpu_app,
-    list_storage,
-    probe,
-    pull,
-    put_files,
-    storage_app,
-)
 from sdcpp_hooks.cli import parse_argv
 from sdcpp_hooks.contract import ValidationError
+from sdcpp_hooks.deployed import (
+    engine,
+    ensure_deployed,
+    gpu_function,
+    storage_function,
+)
 from sdcpp_hooks.gpu import default_gpu_for_recipe, normalize_gpu
 from sdcpp_hooks.hardware import format_host_summary
 from sdcpp_hooks.hf_dataset import publish_image, trigger_pages_rebuild
-from sdcpp_hooks.modal_meter import billed_app, billed_remote, cost_command, print_last_cost
+from sdcpp_hooks.modal_meter import billed_remote, billed_service, cost_command, print_last_cost
 from sdcpp_hooks.recipes import recipe_volume_status
 
 
@@ -79,17 +75,33 @@ def main(argv: list[str] | None = None) -> int:
     if command.action == "cost":
         return cost_command(official=command.official)
 
+    if command.action == "publish":
+        return _publish(command)
+
+    # Persistent deployments are the default execution model. This lookup is
+    # cheap when they already exist; the first run deploys them once. Deployment
+    # itself does not keep a GPU container alive because SDEngine has
+    # min_containers=0.
+    if not (command.action == "web" and command.dry_run):
+        ensure_deployed()
+
     if command.action == "web":
         return _run_web(command)
 
     if command.action in {"pull", "prefetch", "ls", "put"}:
-        with billed_app(storage_app, "storage"):
+        with billed_service("storage"):
             if command.action in {"pull", "prefetch"}:
                 if command.status:
-                    _print_prefetch_status(billed_remote(list_storage, name="ls"))
+                    _print_prefetch_status(
+                        billed_remote(storage_function("list_storage"), name="ls")
+                    )
                 else:
                     print(f"cpu prefetch {len(command.uris)} file(s) onto volume sdcpp-models")
-                    for row in billed_remote(pull, command.uris, name="prefetch"):
+                    for row in billed_remote(
+                        storage_function("pull"),
+                        command.uris,
+                        name="prefetch",
+                    ):
                         print(f"{row['uri']} -> {row['path']} ({row['bytes']} bytes)")
             elif command.action == "put":
                 try:
@@ -97,20 +109,23 @@ def main(argv: list[str] | None = None) -> int:
                 except (OSError, ValueError) as exc:
                     print(exc, file=sys.stderr)
                     return 2
-                for row in billed_remote(put_files, files, name="put"):
+                for row in billed_remote(
+                    storage_function("put_files"),
+                    files,
+                    name="put",
+                ):
                     print(f"{row['path']} ({row['bytes']} bytes)")
             else:
-                _print_storage(billed_remote(list_storage, name="ls"))
+                _print_storage(
+                    billed_remote(storage_function("list_storage"), name="ls")
+                )
             print_last_cost()
         print_last_cost()
         return 0
 
-    if command.action == "publish":
-        return _publish(command)
-
     if command.action == "probe":
-        with billed_app(gpu_app, "probe"):
-            caps = billed_remote(probe, name="probe")
+        with billed_service("probe"):
+            caps = billed_remote(gpu_function("probe"), name="probe")
             print(caps["binary"])
             print(" ".join(caps["flags"]))
             print_last_cost()
@@ -123,21 +138,32 @@ def main(argv: list[str] | None = None) -> int:
         print(exc, file=sys.stderr)
         return 2
 
-    with billed_app(storage_app, "storage"):
-        for row in billed_remote(ensure_artifacts, payload, name="ensure_artifacts"):
+    # CPU phase: ensure every required model is present and committed to the
+    # shared Volume. This call is synchronous; GPU is not touched before it
+    # returns successfully.
+    with billed_service("storage"):
+        for row in billed_remote(
+            storage_function("ensure_artifacts"),
+            payload,
+            name="ensure_artifacts",
+        ):
             print(f"cpu storage {row['uri']} -> {row['path']} ({row['bytes']} bytes)")
         print_last_cost()
     print_last_cost()
 
+    # GPU phase starts only after the CPU staging phase completed. The deployed
+    # Cls is persistent, while its containers still autoscale to zero when idle.
     gpu = _runtime_gpu(command.recipe)
     os.environ["SDCPP_GPU"] = gpu
     print(f"gpu {gpu}")
-    with billed_app(gpu_app, "gpu"):
-        try:
-            engine = SDEngine.with_options(gpu=gpu)()
-        except Exception:
-            engine = SDEngine()
-        result = billed_remote(engine.generate, payload, name="generate", gpu=True)
+    with billed_service("gpu"):
+        remote_engine = engine(gpu=gpu)
+        result = billed_remote(
+            remote_engine.generate,
+            payload,
+            name="generate",
+            gpu=True,
+        )
         host = result.get("host")
         if isinstance(host, dict):
             host["modal_gpu"] = gpu
@@ -221,7 +247,6 @@ def _publish(command, image_path: Path | None = None, payload: dict | None = Non
 
 
 def _run_web(command) -> int:
-    import os
     import webbrowser
 
     import uvicorn
@@ -230,7 +255,10 @@ def _run_web(command) -> int:
         os.environ["SDCPP_WEB_DRY_RUN"] = "1"
     url = f"http://{command.host}:{command.port}"
     print(f"sdcpp-modal web → {url}")
-    print("Local FastAPI. GPU jobs use the existing sdcpp-cli / sdcpp-storage Modal apps.")
+    if command.dry_run:
+        print("Local FastAPI dry-run; Modal deployment is not required.")
+    else:
+        print("Local FastAPI. CPU/GPU jobs call persistent deployed Modal apps.")
     if command.open_browser:
         try:
             webbrowser.open(url)
