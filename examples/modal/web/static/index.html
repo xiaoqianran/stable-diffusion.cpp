@@ -3,45 +3,49 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0b0b0a" />
+  <meta name="theme-color" content="#0e0f12" />
   <meta name="color-scheme" content="dark" />
-  <title>sdcpp-modal · 七方工作台</title>
+  <meta name="application-name" content="sdcpp-modal 七方工作台" />
+  <meta name="description" content="sdcpp-modal 七方工作台 · 成本、GPU 与任务状态集中在 Image Lab 中查看。" />
+  <title>sdcpp-modal · 七方工作台 · Image Lab</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css" />
-  <link rel="stylesheet" href="/static/queue.css" />
+  <link rel="stylesheet" href="/static/ux.css" />
 </head>
 <body>
-  <a class="skip" href="#main">跳到主内容</a>
-  <div class="app">
-    <aside class="rail">
-      <p class="brand">
-        <span class="mark" aria-hidden="true"></span>
-        <span>
-          <strong>sdcpp-modal</strong>
-          <small>七方工作台</small>
-        </span>
-      </p>
-      <nav aria-label="工作台">
-        <a href="#/generate" data-page="generate">生成</a>
-        <a href="#/batch" data-page="batch">批量</a>
-        <a href="#/jobs" data-page="jobs">任务</a>
-        <a href="#/cost" data-page="cost">成本</a>
-        <a href="#/gallery" data-page="gallery">画廊</a>
-        <a href="#/settings" data-page="settings">设置</a>
+  <a class="skip-link" href="#workspace">跳到主要内容</a>
+  <div id="app-shell" class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#/create" aria-label="sdcpp-modal Image Lab 首页">
+        <span class="brand-mark" aria-hidden="true">S</span>
+        <span class="brand-copy"><strong>sdcpp</strong><small>IMAGE LAB</small></span>
+      </a>
+      <nav class="primary-nav" aria-label="主要导航">
+        <a href="#/create" data-route="create"><span>创建</span></a>
+        <a href="#/runs" data-route="runs"><span>运行</span><b id="run-count" hidden>0</b></a>
+        <a href="#/gallery" data-route="gallery"><span>图库</span></a>
       </nav>
-      <p class="rail-foot" id="rail-status" role="status">正在检查…</p>
-    </aside>
-    <div class="stage">
-      <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
-      <main id="main" tabindex="-1"></main>
-    </div>
+      <div class="topbar-actions">
+        <button id="queue-button" class="system-chip" type="button" aria-haspopup="dialog">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="queue-label">检查 GPU…</span>
+        </button>
+        <button id="system-button" class="icon-button" type="button" aria-label="系统状态" title="系统状态">•••</button>
+      </div>
+    </header>
+
+    <main id="workspace" class="workspace" tabindex="-1"></main>
+
+    <nav class="mobile-nav" aria-label="移动端导航">
+      <a href="#/create" data-route="create">创建</a>
+      <a href="#/runs" data-route="runs">运行</a>
+      <a href="#/gallery" data-route="gallery">图库</a>
+    </nav>
   </div>
-  <dialog id="lightbox" aria-labelledby="lightbox-title"></dialog>
-  <script src="/static/app.js" type="module"></script>
-  <script src="/static/batch_controls.js" type="module"></script>
-  <script src="/static/queue.js" type="module"></script>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <dialog id="image-dialog" class="image-dialog"></dialog>
+  <dialog id="system-dialog" class="system-dialog"></dialog>
+
+  <script src="/static/ux-main.js" type="module"></script>
 </body>
 </html>
