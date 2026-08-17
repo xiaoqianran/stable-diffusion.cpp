@@ -30,7 +30,8 @@ async function boot() {
     setInterval(async () => {
       const route = parseRoute();
       const ok = await refreshRuntime();
-      if (ok && route.page === "runs") await renderRoute({ preserveScroll: true });
+      if (ok && route.page === "runs" && route.id) await renderRunDetail(route.id, { silent: true });
+      else if (ok && route.page === "runs") renderRuns();
     }, 1800);
   } catch (error) {
     workspace.innerHTML = `<div class="empty-state"><div><strong>工作台启动失败</strong><p>${escapeHtml(error.message)}</p><button class="secondary-button" onclick="location.reload()">重新加载</button></div></div>`;
