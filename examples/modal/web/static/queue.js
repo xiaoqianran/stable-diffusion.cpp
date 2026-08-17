@@ -201,8 +201,6 @@ async function refresh() {
   }
 }
 
-const observer = new MutationObserver(() => renderCached());
-observer.observe(document.getElementById("main"), { childList: true, subtree: true });
 window.addEventListener("hashchange", () => setTimeout(renderCached, 0));
 
 refresh();
