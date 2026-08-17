@@ -8,6 +8,17 @@ STORAGE_APP_NAME = os.environ.get("SDCPP_STORAGE_APP", "sdcpp-storage")
 GPU_APP_NAME = os.environ.get("SDCPP_GPU_APP", "sdcpp-cli")
 MODAL_ENVIRONMENT = os.environ.get("SDCPP_MODAL_ENV") or None
 
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+GPU_MAX_CONTAINERS = _positive_int_env("SDCPP_GPU_MAX_CONTAINERS", 1)
+
 _READY: set[str] = set()
 
 
@@ -104,6 +115,10 @@ def gpu_function(name: str):
 def engine(*, gpu: str | None = None) -> Any:
     ensure_deployed()
     cls = _lookup_cls(GPU_APP_NAME, "SDEngine")
+    # with_options() creates an independently autoscaled Cls variant. Repeat the
+    # cap here so selecting a GPU dynamically cannot fan out into extra workers.
+    options: dict[str, Any] = {"max_containers": GPU_MAX_CONTAINERS}
     if gpu:
-        cls = cls.with_options(gpu=gpu)
+        options["gpu"] = gpu
+    cls = cls.with_options(**options)
     return cls()
