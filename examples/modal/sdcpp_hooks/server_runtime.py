@@ -108,7 +108,7 @@ def wait_for_server(process: subprocess.Popen[Any], *, url: str = SERVER_URL, ti
         if code is not None:
             raise RuntimeError(f"sd-server exited during model load with code {code}")
         try:
-            _request_json("GET", f"{url}/v1/models", timeout=2.0)
+            _request_json("GET", f"{url}/sdapi/v1/options", timeout=2.0)
             return
         except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
             last_error = str(exc)
