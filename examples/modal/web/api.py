@@ -110,8 +110,8 @@ def meta() -> dict[str, Any]:
         },
         "version": "0.1.0",
         "runtime": {
-            "note": "Local FastAPI. GPU work uses the existing sdcpp-cli / sdcpp-storage Modal apps.",
-            "would_use": "ephemeral app.run()",
+            "note": "Local FastAPI. CPU/GPU work calls persistent deployed Modal apps.",
+            "would_use": "deployed Function.from_name / Cls.from_name",
         },
     }
 
