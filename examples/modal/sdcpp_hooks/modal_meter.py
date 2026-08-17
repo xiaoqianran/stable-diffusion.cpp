@@ -1,8 +1,9 @@
 """Modal-facing cost hooks.
 
 Keep this file as the only place that talks to the Modal SDK for billing.
-`app.py` / `sdcpp_modal.py` should wrap `app.run()` and `.remote()` here
-instead of putting prices or ledgers into pull/generate.
+Deployed service calls are metered here without opening ephemeral app.run()
+sessions. `sdcpp_modal.py` and the Web generator look up deployed handles via
+`sdcpp_hooks.deployed` and call `.remote()` directly.
 """
 
 from __future__ import annotations
@@ -53,15 +54,19 @@ def official_price_book() -> PriceBook:
 
 
 @contextmanager
-def billed_app(app: Any, role: str) -> Iterator[str]:
-    """Start a billed Modal session. Image builds and workers inside are in-window."""
+def billed_service(role: str) -> Iterator[str]:
+    """Meter a window that calls an already-deployed Modal service.
+
+    Unlike the old billed_app() implementation this never enters app.run(), so
+    it does not create an ephemeral App for every local request.
+    """
     trace_id = uuid.uuid4().hex[:12]
     session_id = uuid.uuid4().hex[:12]
     book = official_price_book()
     tokens = begin_trace(trace_id, book)
     plan = default_plan(
         role,
-        notes="app.run window; includes image build and connect; GPU is priced on remote/container",
+        notes="deployed service call window; remote/container compute is priced separately",
     )
     try:
         with span(
@@ -70,17 +75,24 @@ def billed_app(app: Any, role: str) -> Iterator[str]:
             book=book,
             ledger=client_ledger(),
             event_id=session_id,
-            extra={"role": role, "call": f"app.run:{role}", "parent_id": ""},
+            extra={"role": role, "call": f"deployed:{role}", "parent_id": ""},
         ):
             with bind_parent(session_id):
-                with app.run():
-                    yield trace_id
+                yield trace_id
     finally:
         end_trace(*tokens)
 
 
+@contextmanager
+def billed_app(app: Any, role: str) -> Iterator[str]:
+    """Backward-compatible alias for callers migrating off ephemeral app.run()."""
+    del app
+    with billed_service(role) as trace_id:
+        yield trace_id
+
+
 def billed_remote(fn: Any, *args: Any, name: str, gpu: bool = False, **kwargs: Any) -> Any:
-    """Call `fn.remote` and record the wait as a billed remote span."""
+    """Call a deployed handle's `.remote()` and meter the client wait."""
     plan = plan_for(name, gpu=gpu)
     extra = {"call": name, **kwargs.pop("cost_extra", {})}
     with span(plan, phase="remote", book=current_book(), ledger=client_ledger(), extra=extra):
