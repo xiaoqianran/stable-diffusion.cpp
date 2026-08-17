@@ -32,6 +32,8 @@ IMAGE_TAG = os.environ.get(
     "SDCPP_IMAGE",
     "ghcr.io/leejet/stable-diffusion.cpp:master-cuda",
 )
+
+
 def _gpu_name() -> str:
     raw = os.environ.get("SDCPP_GPU", "L40S")
     try:
@@ -40,9 +42,18 @@ def _gpu_name() -> str:
         raise RuntimeError(str(exc)) from exc
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
 GPU = _gpu_name()
 MODEL_ROOT = Path(os.environ.get("SDCPP_MODEL_ROOT", "/models"))
 IDLE_SECONDS = int(os.environ.get("SDCPP_IDLE_SECONDS", "10"))
+GPU_MAX_CONTAINERS = _positive_int_env("SDCPP_GPU_MAX_CONTAINERS", 1)
 
 volume = modal.Volume.from_name("sdcpp-models", create_if_missing=True)
 
@@ -106,6 +117,16 @@ def _idle_kwargs() -> dict:
         "min_containers": 0,
         "buffer_containers": 0,
         "scaledown_window": IDLE_SECONDS,
+    }
+
+
+def _gpu_idle_kwargs() -> dict:
+    # A single GPU worker is intentional for the interactive single-user flow:
+    # overlapping prompt submissions queue instead of causing Modal to fan out
+    # into multiple separately billed GPU containers.
+    return {
+        **_idle_kwargs(),
+        "max_containers": GPU_MAX_CONTAINERS,
     }
 
 
@@ -220,7 +241,7 @@ def probe() -> dict:
     gpu=GPU,
     timeout=2 * 60 * 60,
     volumes={str(MODEL_ROOT): volume},
-    **_idle_kwargs(),
+    **_gpu_idle_kwargs(),
 )
 class SDEngine:
     @modal.enter()
