@@ -95,8 +95,15 @@ def cost_ledger(job_id: str | None = None) -> dict[str, Any]:
     return ledger_report(job_id=job_id)
 
 
+@router.get("/runtime/queue")
+def runtime_queue() -> dict[str, Any]:
+    """Current local GPU scheduler state used by the workbench UI."""
+    return {"gpu": _service.queue_snapshot()}
+
+
 @router.get("/meta")
 def meta() -> dict[str, Any]:
+    queue = _service.queue_snapshot()
     return {
         "models": list_models(),
         "gpus": list_gpus(),
@@ -112,6 +119,7 @@ def meta() -> dict[str, Any]:
         "runtime": {
             "note": "Local FastAPI. CPU/GPU work calls persistent deployed Modal apps.",
             "would_use": "deployed Function.from_name / Cls.from_name",
+            "gpu_queue_max_active": queue["max_active"],
         },
     }
 
@@ -134,14 +142,14 @@ def doctor() -> dict[str, Any]:
 
         checks.append({"name": "modal", "ok": True, "detail": "import ok"})
     except Exception as exc:
-        checks.append({"name": "modal", "ok": False, "detail": str(exc)})
+        checks.append({"name": "modal", "ok": False, "detail": str(exc))
     checks.append(_proxy_extra_check())
     try:
         from PIL import Image  # noqa: F401
 
         checks.append({"name": "pillow", "ok": True, "detail": "import ok"})
     except Exception as exc:
-        checks.append({"name": "pillow", "ok": False, "detail": str(exc)})
+        checks.append({"name": "pillow", "ok": False, "detail": str(exc))
     skip = {"modal", "api_proxy"}
     return {"ready": all(item["ok"] for item in checks if item["name"] not in skip), "checks": checks}
 
