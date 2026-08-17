@@ -9,9 +9,19 @@ DEFAULT_BINARIES = (
     "/sd.cpp/bin/sd-cli",
     "sd-cli",
 )
+DEFAULT_SERVER_BINARIES = (
+    "/sd-server",
+    "/sd.cpp/bin/sd-server",
+    "sd-server",
+)
 
 
-def probe_cli_help(binaries: tuple[str, ...] = DEFAULT_BINARIES) -> tuple[str, str]:
+def _probe_help(
+    binaries: tuple[str, ...],
+    *,
+    required_any: tuple[str, ...],
+    label: str,
+) -> tuple[str, str]:
     errors: list[str] = []
     for binary in binaries:
         if binary.startswith("/") and not Path(binary).exists():
@@ -29,7 +39,25 @@ def probe_cli_help(binaries: tuple[str, ...] = DEFAULT_BINARIES) -> tuple[str, s
             errors.append(f"{binary}: {exc}")
             continue
         text = completed.stdout or completed.stderr
-        if "--prompt" in text or "--model" in text:
+        if any(marker in text for marker in required_any):
             return text, binary
-        errors.append(f"{binary}: help text had no --prompt/--model")
-    raise FileNotFoundError("sd-cli not found: " + "; ".join(errors))
+        errors.append(f"{binary}: help text missing expected flags")
+    raise FileNotFoundError(f"{label} not found: " + "; ".join(errors))
+
+
+def probe_cli_help(binaries: tuple[str, ...] = DEFAULT_BINARIES) -> tuple[str, str]:
+    return _probe_help(
+        binaries,
+        required_any=("--prompt", "--model"),
+        label="sd-cli",
+    )
+
+
+def probe_server_help(
+    binaries: tuple[str, ...] = DEFAULT_SERVER_BINARIES,
+) -> tuple[str, str]:
+    return _probe_help(
+        binaries,
+        required_any=("--listen-port", "--diffusion-model", "--model"),
+        label="sd-server",
+    )

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from .recipes import apply_recipe
+
+
+ALLOWED_PARALLELISM = {1, 2, 4}
 
 
 def render_placeholder(prompt: str, recipe: str, seed: int, width: int, height: int) -> bytes:
@@ -141,6 +146,31 @@ class ModalGenerator:
                     )
         return requests
 
+    @staticmethod
+    def _result(item: dict[str, Any], request: Any, result: dict[str, Any]) -> dict[str, Any]:
+        images = []
+        for raw in result.get("images") or []:
+            if isinstance(raw, (bytes, bytearray)):
+                images.append(bytes(raw))
+            else:
+                images.append(base64.b64decode(raw))
+        return {
+            **item,
+            "images": images,
+            "width": result.get("width") or request.width,
+            "height": result.get("height") or request.height,
+            "steps": result.get("steps") or request.steps,
+            "cfg_scale": result.get("cfg_scale") or request.cfg_scale,
+            "seed": result.get("seed") if result.get("seed") is not None else item["seed"],
+            "duration_ms": result.get("duration_ms"),
+            "host": result.get("host") or {},
+            "argv": result.get("argv"),
+            "dropped_fields": result.get("dropped_fields"),
+            "cost": result.get("cost"),
+            "model_resident": bool(result.get("model_resident")),
+            "server_endpoint": result.get("server_endpoint"),
+        }
+
     def generate_prepared_job(
         self,
         items: list[dict[str, Any]],
@@ -148,51 +178,63 @@ class ModalGenerator:
         *,
         gpu: str,
         job_id: str = "",
+        parallelism: int = 1,
     ) -> Iterator[dict[str, Any]]:
-        """Run only the GPU phase for requests whose artifacts are already staged."""
+        """Run a prepared batch with exactly 1, 2 or 4 concurrent GPU inputs."""
         if not items:
             return
+        if len(items) != len(requests):
+            raise ValueError("items/requests length mismatch")
+        parallelism = int(parallelism)
+        if parallelism not in ALLOWED_PARALLELISM:
+            raise ValueError("parallelism must be one of 1, 2, 4")
 
-        from .deployed import engine
+        from .deployed import WEB_GPU_POOL_MAX, engine
         from .meter import bind_task
         from .modal_meter import billed_remote, billed_service
 
-        if len(items) != len(requests):
-            raise ValueError("items/requests length mismatch")
+        recipe = str(items[0]["recipe"])
+        if any(str(item["recipe"]) != recipe for item in items):
+            raise ValueError("one GPU batch job must use a single recipe")
 
-        with bind_task(job_id=job_id, recipe=items[0]["recipe"], gpu=gpu):
-            with billed_service("gpu"):
-                remote_engine = engine(gpu=gpu)
-                for item, request in zip(items, requests):
-                    with bind_task(image_id=item.get("id"), recipe=item["recipe"]):
-                        result = billed_remote(
-                            remote_engine.generate,
-                            request.to_dict(),
-                            name="generate",
-                            gpu=True,
-                        )
-                    images = []
-                    for raw in result.get("images") or []:
-                        if isinstance(raw, (bytes, bytearray)):
-                            images.append(bytes(raw))
-                        else:
-                            import base64
+        # max_containers stays fixed at 4 for every Web recipe pool. Actual fan-out
+        # is controlled by the number of simultaneous remote calls below, so jobs
+        # using 1/2/4 still reuse the same warm model-loaded pool.
+        remote_engine = engine(
+            gpu=gpu,
+            recipe=recipe,
+            max_containers=WEB_GPU_POOL_MAX,
+        )
 
-                            images.append(base64.b64decode(raw))
-                    yield {
-                        **item,
-                        "images": images,
-                        "width": result.get("width") or request.width,
-                        "height": result.get("height") or request.height,
-                        "steps": result.get("steps") or request.steps,
-                        "cfg_scale": result.get("cfg_scale") or request.cfg_scale,
-                        "seed": result.get("seed") or item["seed"],
-                        "duration_ms": result.get("duration_ms"),
-                        "host": result.get("host") or {},
-                        "argv": result.get("argv"),
-                        "dropped_fields": result.get("dropped_fields"),
-                        "cost": result.get("cost"),
-                    }
+        def invoke(index: int) -> dict[str, Any]:
+            item = items[index]
+            request = requests[index]
+            with bind_task(
+                job_id=job_id,
+                image_id=item.get("id"),
+                recipe=recipe,
+                gpu=gpu,
+            ):
+                with billed_service("gpu"):
+                    result = billed_remote(
+                        remote_engine.generate,
+                        request.to_dict(),
+                        name="generate",
+                        gpu=True,
+                        cost_extra={"parallelism": parallelism, "model_pool": recipe},
+                    )
+            return self._result(item, request, result)
+
+        if parallelism == 1 or len(items) == 1:
+            for index in range(len(items)):
+                yield invoke(index)
+            return
+
+        workers = min(parallelism, len(items))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sdcpp-gpu") as pool:
+            futures = [pool.submit(invoke, index) for index in range(len(items))]
+            for future in as_completed(futures):
+                yield future.result()
 
     def generate_job(
         self,
@@ -200,12 +242,13 @@ class ModalGenerator:
         *,
         gpu: str,
         job_id: str = "",
+        parallelism: int = 1,
     ) -> Iterator[dict[str, Any]]:
-        """Compatibility wrapper: CPU stage first, then GPU generation."""
         requests = self.prepare_job(items, gpu=gpu, job_id=job_id)
         yield from self.generate_prepared_job(
             items,
             requests,
             gpu=gpu,
             job_id=job_id,
+            parallelism=parallelism,
         )

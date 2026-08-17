@@ -1,7 +1,8 @@
-"""Modal workers for the standalone sdcpp CLI.
+"""Modal workers for the standalone sdcpp CLI and Web workbench.
 
-Downloads run only on CPU and write volume sdcpp-models.
-GPU containers load those cached files and run sd-cli, then scale to zero.
+Downloads run only on CPU and write volume sdcpp-models. Generic CLI calls use
+sd-cli. Web recipe calls use a parametrized SDEngine whose @modal.enter starts
+sd-server once, so a warm container keeps that recipe loaded across prompts.
 """
 
 from __future__ import annotations
@@ -25,6 +26,11 @@ from sdcpp_hooks.hooks import generate, use_engine, use_models
 from sdcpp_hooks.meter import ContainerMeter
 from sdcpp_hooks.probe import probe_cli_help
 from sdcpp_hooks.runner import EngineError, run_cli
+from sdcpp_hooks.server_runtime import (
+    server_generate,
+    start_recipe_server,
+    stop_recipe_server,
+)
 
 
 HERE = Path(__file__).resolve().parent
@@ -121,9 +127,6 @@ def _idle_kwargs() -> dict:
 
 
 def _gpu_idle_kwargs() -> dict:
-    # A single GPU worker is intentional for the interactive single-user flow:
-    # overlapping prompt submissions queue instead of causing Modal to fan out
-    # into multiple separately billed GPU containers.
     return {
         **_idle_kwargs(),
         "max_containers": GPU_MAX_CONTAINERS,
@@ -240,27 +243,48 @@ def probe() -> dict:
 @gpu_app.cls(
     gpu=GPU,
     timeout=2 * 60 * 60,
+    startup_timeout=30 * 60,
     volumes={str(MODEL_ROOT): volume},
     **_gpu_idle_kwargs(),
 )
 class SDEngine:
+    # Empty recipe preserves the generic CLI path. A bundled recipe creates its
+    # own Modal container pool and loads sd-server once in @enter.
+    recipe: str = modal.parameter(default="")
+
     @modal.enter()
     def start(self) -> None:
         self._meter = ContainerMeter.start("SDEngine", gpu=GPU)
+        self._server = None
+        self._server_argv: list[str] = []
+        self._server_dropped: list[str] = []
+        self.engine = None
+        self.binary = ""
+        if self.recipe:
+            volume.reload()
+            self._server, self._server_argv, self._server_dropped = start_recipe_server(
+                self.recipe,
+                MODEL_ROOT,
+            )
+        else:
+            self._ensure_cli_engine()
+
+    def _ensure_cli_engine(self) -> None:
+        if self.engine is not None:
+            return
         help_text, binary = probe_cli_help()
         self.engine = use_engine(help_text=help_text, binary=binary)
         self.binary = binary
 
     @modal.exit()
     def stop(self) -> None:
+        stop_recipe_server(getattr(self, "_server", None))
         meter = getattr(self, "_meter", None)
         if meter is not None:
             meter.stop()
 
-    @modal.method()
-    def generate(self, payload: dict) -> dict:
-        request = GenerateRequest.from_dict(payload)
-        request.validate()
+    def _legacy_generate(self, request: GenerateRequest) -> dict:
+        self._ensure_cli_engine()
         volume.reload()
         models = use_models(request, cache_dir=MODEL_ROOT, allow_download=False)
         output_path = Path("/tmp/sdcpp-output.png")
@@ -278,8 +302,6 @@ class SDEngine:
             help_text=self.engine.raw_help,
             binary=self.binary,
         ))
-        host.setdefault("modal_gpu", os.environ.get("SDCPP_GPU", GPU))
-        host.setdefault("sdcpp_image", IMAGE_TAG)
         return {
             "images": [base64.b64encode(image).decode("ascii") for image in result.images],
             "argv": result.argv,
@@ -288,9 +310,46 @@ class SDEngine:
             "seed": result.seed,
             "duration_ms": result.duration_ms,
             "host": host,
-            "width": request.width,
-            "height": request.height,
-            "steps": request.steps,
-            "cfg_scale": request.cfg_scale,
-            "model": request.model or request.diffusion_model,
         }
+
+    @modal.method()
+    def generate(self, payload: dict) -> dict:
+        request = GenerateRequest.from_dict(payload)
+        request.validate()
+
+        # Recipe pools keep one sd-server process and its model resident for all
+        # compatible prompts handled by this warm container.
+        if self.recipe and not request.init_image and not request.control_net:
+            result = server_generate(request)
+            host = collect_run_environment(binary="/sd-server")
+            body = {
+                "images": [base64.b64encode(image).decode("ascii") for image in result["images"]],
+                "argv": self._server_argv,
+                "dropped_fields": self._server_dropped,
+                "engine_id": "/sd-server",
+                "seed": request.seed,
+                "duration_ms": result["duration_ms"],
+                "host": host,
+                "server_endpoint": result["endpoint"],
+                "model_resident": True,
+                "recipe": self.recipe,
+            }
+        else:
+            body = self._legacy_generate(request)
+            body["model_resident"] = False
+            body["recipe"] = self.recipe or None
+
+        host = dict(body.get("host") or {})
+        host.setdefault("modal_gpu", os.environ.get("SDCPP_GPU", GPU))
+        host.setdefault("sdcpp_image", IMAGE_TAG)
+        body["host"] = host
+        body.update(
+            {
+                "width": request.width,
+                "height": request.height,
+                "steps": request.steps,
+                "cfg_scale": request.cfg_scale,
+                "model": request.model or request.diffusion_model,
+            }
+        )
+        return body

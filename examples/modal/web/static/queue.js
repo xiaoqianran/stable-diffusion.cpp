@@ -27,6 +27,9 @@ function jobPhaseText(job) {
     const ahead = Number(job.queue?.ahead || 0);
     return ahead > 0 ? `GPU 排队中 · 前方 ${ahead} 个任务` : "GPU 排队中 · 即将开始";
   }
+  if (job.phase === "gpu_running") {
+    return `GPU 生成中 · 并行 ${job.parallelism || 1}`;
+  }
   return phaseLabels[job.phase] || phaseLabels[job.status] || job.phase || job.status || "";
 }
 
@@ -52,9 +55,9 @@ function ensureGlobalPanel() {
         </div>
       </div>
       <div class="gpu-queue-metrics">
-        <span><b id="gpu-running-count">0</b> 运行</span>
-        <span><b id="gpu-waiting-count">0</b> 排队</span>
-        <span><b id="gpu-slot-count">1</b> 并发上限</span>
+        <span><b id="gpu-running-count">0</b> 运行任务</span>
+        <span><b id="gpu-waiting-count">0</b> 排队任务</span>
+        <span><b id="gpu-parallel-count">1</b> 当前 GPU 并行</span>
       </div>`;
     head.insertAdjacentElement("afterend", panel);
   }
@@ -69,20 +72,22 @@ function renderGlobalQueue(queue) {
   const sub = panel.querySelector("#gpu-queue-sub");
   const running = panel.querySelector("#gpu-running-count");
   const waiting = panel.querySelector("#gpu-waiting-count");
-  const slots = panel.querySelector("#gpu-slot-count");
+  const parallel = panel.querySelector("#gpu-parallel-count");
 
   panel.dataset.state = queue.state || "idle";
   running.textContent = String(queue.running_count || 0);
   waiting.textContent = String(queue.queue_length || 0);
-  slots.textContent = String(queue.max_active || 1);
+  parallel.textContent = String(queue.running_parallelism || 1);
 
   if ((queue.running_count || 0) > 0) {
-    title.textContent = "GPU 生成中";
-    const ids = queue.running_job_ids || [];
-    sub.textContent = `${queue.queue_length || 0} 个任务等待 · 当前 ${ids.join(", ") || "远程任务"}`;
+    title.textContent = `GPU 生成中 · 并行 ${queue.running_parallelism || 1}`;
+    const warm = queue.running_model_resident ? " · 模型常驻" : "";
+    const model = queue.running_recipe ? ` · ${queue.running_recipe}` : "";
+    sub.textContent = `${queue.queue_length || 0} 个任务等待${model}${warm}`;
   } else if ((queue.queue_length || 0) > 0) {
     title.textContent = "GPU 排队中";
-    sub.textContent = `${queue.queue_length} 个任务等待 GPU 槽位`;
+    const preferred = queue.affinity?.preferred ? ` · 优先复用 ${queue.affinity.preferred.split("::").pop()}` : "";
+    sub.textContent = `${queue.queue_length} 个任务等待 GPU 调度${preferred}`;
   } else {
     title.textContent = "GPU 空闲";
     sub.textContent = "没有任务等待 GPU";
@@ -108,11 +113,14 @@ function decorateJob(job, anchor) {
     }
     if (job.phase === "gpu_queued") {
       const position = job.queue?.position;
-      note.textContent = position ? `执行顺序 #${position}` : "等待 GPU";
+      const warm = job.queue?.affinity_key ? " · 同模型亲和" : "";
+      note.textContent = `${position ? `执行顺序 #${position}` : "等待 GPU"}${warm}`;
     } else if (job.phase === "preparing") {
       note.textContent = "CPU / Volume 阶段";
     } else if (job.phase === "gpu_running") {
-      note.textContent = "占用 GPU 槽位";
+      note.textContent = `GPU ×${job.parallelism || 1}${job.model_resident ? " · 模型常驻" : ""}`;
+    } else if (job.parallelism > 1) {
+      note.textContent = `批量并行 ×${job.parallelism}`;
     } else {
       note.textContent = "";
     }
@@ -147,7 +155,7 @@ function decorateJobDetail() {
     else panel.prepend(row);
   }
   const value = row.querySelector(".gpu-job-queue-value");
-  value.textContent = jobPhaseText(job);
+  value.textContent = `${jobPhaseText(job)} · 批量并行 ${job.parallelism || 1}${job.model_resident ? " · 模型常驻" : ""}`;
 }
 
 function decorateActiveSubmission() {
@@ -164,7 +172,7 @@ function decorateActiveSubmission() {
     note.className = "active-job-queue";
     idNode.insertAdjacentElement("afterend", note);
   }
-  note.textContent = jobPhaseText(job);
+  note.textContent = `${jobPhaseText(job)} · ×${job.parallelism || 1}`;
 }
 
 function renderCached() {

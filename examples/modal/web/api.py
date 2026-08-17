@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -50,6 +50,7 @@ class CreateJobBody(BaseModel):
     steps: int | None = None
     cfg_scale: float | None = None
     seed: int | None = None
+    parallelism: Literal[1, 2, 4] = 1
     dry_run: bool = False
 
 
@@ -81,6 +82,7 @@ def _config_from_body(body: CreateJobBody) -> dict[str, Any]:
         "cfg_scale": body.cfg_scale,
         "seed": body.seed,
         "count": body.count,
+        "parallelism": body.parallelism,
         "dry_run": body.dry_run or os.environ.get("SDCPP_WEB_DRY_RUN") == "1",
     }
 
@@ -97,7 +99,6 @@ def cost_ledger(job_id: str | None = None) -> dict[str, Any]:
 
 @router.get("/runtime/queue")
 def runtime_queue() -> dict[str, Any]:
-    """Current local GPU scheduler state used by the workbench UI."""
     return {"gpu": _service.queue_snapshot()}
 
 
@@ -114,12 +115,16 @@ def meta() -> dict[str, Any]:
             "port": 7863,
             "data_dir": str(_DATA_DIR),
             "cost_log": str(client_ledger_path()),
+            "parallelism": 1,
         },
-        "version": "0.1.0",
+        "version": "0.2.0",
         "runtime": {
-            "note": "Local FastAPI. CPU/GPU work calls persistent deployed Modal apps.",
-            "would_use": "deployed Function.from_name / Cls.from_name",
-            "gpu_queue_max_active": queue["max_active"],
+            "note": "Local FastAPI. CPU stages models; Web recipe GPU pools keep sd-server/model warm when containers survive.",
+            "would_use": "deployed parametrized Cls + persistent sd-server",
+            "gpu_job_max_active": queue["max_active"],
+            "batch_parallelism": [1, 2, 4],
+            "model_pool_max_containers": 4,
+            "same_model_affinity": True,
         },
     }
 
@@ -139,14 +144,12 @@ def doctor() -> dict[str, Any]:
         checks.append({"name": "data_dir", "ok": False, "detail": str(exc)})
     try:
         import modal  # noqa: F401
-
         checks.append({"name": "modal", "ok": True, "detail": "import ok"})
     except Exception as exc:
         checks.append({"name": "modal", "ok": False, "detail": str(exc)})
     checks.append(_proxy_extra_check())
     try:
         from PIL import Image  # noqa: F401
-
         checks.append({"name": "pillow", "ok": True, "detail": "import ok"})
     except Exception as exc:
         checks.append({"name": "pillow", "ok": False, "detail": str(exc)})
@@ -159,11 +162,7 @@ def _proxy_extra_check() -> dict[str, Any]:
         import aiohttp_socks  # noqa: F401
         import python_socks  # noqa: F401
     except ImportError:
-        return {
-            "name": "api_proxy",
-            "ok": False,
-            "detail": "missing; install modal[api-proxy-support]",
-        }
+        return {"name": "api_proxy", "ok": False, "detail": "missing; install modal[api-proxy-support]"}
     detail = "modal[api-proxy-support]"
     if os.environ.get("MODAL_DISABLE_API_PROXY"):
         detail += "; MODAL_DISABLE_API_PROXY=1"
@@ -196,6 +195,7 @@ async def create_job_from_file(
     steps: int | None = None,
     cfg_scale: float | None = None,
     seed: int | None = None,
+    parallelism: Literal[1, 2, 4] = 1,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     text = (await file.read()).decode("utf-8", errors="replace")
@@ -209,6 +209,7 @@ async def create_job_from_file(
         steps=steps,
         cfg_scale=cfg_scale,
         seed=seed,
+        parallelism=parallelism,
         dry_run=dry_run,
     )
     return create_job(body)
@@ -277,14 +278,7 @@ def gallery(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
 ) -> dict[str, Any]:
-    return _service.list_images(
-        job_id=job_id,
-        recipe=recipe or model,
-        q=q,
-        sort=sort,
-        page=page,
-        per_page=per_page,
-    )
+    return _service.list_images(job_id=job_id, recipe=recipe or model, q=q, sort=sort, page=page, per_page=per_page)
 
 
 @router.get("/images/{image_id}")
