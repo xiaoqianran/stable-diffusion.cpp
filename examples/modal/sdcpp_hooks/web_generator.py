@@ -84,41 +84,68 @@ class ModalGenerator:
             return
         import os
 
-        from app import SDEngine, ensure_artifacts, gpu_app, storage_app
+        from .deployed import engine, ensure_deployed, storage_function
         from .meter import bind_task
-        from .modal_meter import billed_app, billed_remote
+        from .modal_meter import billed_remote, billed_service
 
         os.environ["SDCPP_GPU"] = gpu
-        first = apply_recipe(
-            items[0]["recipe"],
-            prompt=items[0]["prompt"],
-            seed=items[0]["seed"],
-            width=items[0].get("width"),
-            height=items[0].get("height"),
-            steps=items[0].get("steps"),
-            cfg_scale=items[0].get("cfg_scale"),
-        ).to_dict()
+        ensure_deployed()
+
+        requests = [
+            apply_recipe(
+                item["recipe"],
+                prompt=item["prompt"],
+                seed=item["seed"],
+                width=item.get("width"),
+                height=item.get("height"),
+                steps=item.get("steps"),
+                cfg_scale=item.get("cfg_scale"),
+            )
+            for item in items
+        ]
+
+        # Stage every model needed by the job on CPU first. Each call waits for
+        # the Volume commit, so no GPU container is started until all artifacts
+        # are available remotely.
         with bind_task(job_id=job_id, recipe=items[0]["recipe"], gpu=gpu):
-            with billed_app(storage_app, "storage"):
-                billed_remote(ensure_artifacts, first, name="ensure_artifacts")
-            with billed_app(gpu_app, "gpu"):
-                try:
-                    engine = SDEngine.with_options(gpu=gpu)()
-                except Exception:
-                    engine = SDEngine()
-                for item in items:
-                    request = apply_recipe(
-                        item["recipe"],
-                        prompt=item["prompt"],
-                        seed=item["seed"],
-                        width=item.get("width"),
-                        height=item.get("height"),
-                        steps=item.get("steps"),
-                        cfg_scale=item.get("cfg_scale"),
+            with billed_service("storage"):
+                ensure_artifacts = storage_function("ensure_artifacts")
+                seen: set[tuple[str, ...]] = set()
+                for request in requests:
+                    payload = request.to_dict()
+                    artifact_key = tuple(
+                        str(payload.get(key) or "")
+                        for key in (
+                            "model",
+                            "diffusion_model",
+                            "uncond_diffusion_model",
+                            "vae",
+                            "clip_l",
+                            "clip_g",
+                            "clip_vision",
+                            "t5xxl",
+                            "llm",
+                            "llm_vision",
+                            "control_net",
+                            "taesd",
+                            "upscale_model",
+                        )
                     )
+                    if artifact_key in seen:
+                        continue
+                    seen.add(artifact_key)
+                    billed_remote(
+                        ensure_artifacts,
+                        payload,
+                        name="ensure_artifacts",
+                    )
+
+            with billed_service("gpu"):
+                remote_engine = engine(gpu=gpu)
+                for item, request in zip(items, requests):
                     with bind_task(image_id=item.get("id"), recipe=item["recipe"]):
                         result = billed_remote(
-                            engine.generate,
+                            remote_engine.generate,
                             request.to_dict(),
                             name="generate",
                             gpu=True,
