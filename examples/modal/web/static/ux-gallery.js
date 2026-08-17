@@ -2,6 +2,9 @@ import { $, $$, api, escapeHtml, imageDialog, pageTitle, state, toast, workspace
 
 export async function renderGallery(route) {
   const g = state.gallery;
+  if (!route.params.toString()) {
+    Object.assign(g, { page: 1, q: "", recipe: "", sort: "newest", job: "" });
+  }
   if (route.params.has("job")) g.job = route.params.get("job"); else if (!route.params.has("page")) g.job = "";
   if (route.params.has("page")) g.page = Math.max(1, Number(route.params.get("page")) || 1);
   if (route.params.has("q")) g.q = route.params.get("q") || "";
