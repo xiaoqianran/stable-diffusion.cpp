@@ -142,14 +142,14 @@ def doctor() -> dict[str, Any]:
 
         checks.append({"name": "modal", "ok": True, "detail": "import ok"})
     except Exception as exc:
-        checks.append({"name": "modal", "ok": False, "detail": str(exc))
+        checks.append({"name": "modal", "ok": False, "detail": str(exc)})
     checks.append(_proxy_extra_check())
     try:
         from PIL import Image  # noqa: F401
 
         checks.append({"name": "pillow", "ok": True, "detail": "import ok"})
     except Exception as exc:
-        checks.append({"name": "pillow", "ok": False, "detail": str(exc))
+        checks.append({"name": "pillow", "ok": False, "detail": str(exc)})
     skip = {"modal", "api_proxy"}
     return {"ready": all(item["ok"] for item in checks if item["name"] not in skip), "checks": checks}
 
