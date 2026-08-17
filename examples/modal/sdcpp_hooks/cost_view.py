@@ -248,6 +248,11 @@ def ledger_report(
     return {
         "ledger_path": str(client_ledger_path()),
         "event_count": len(events),
+        "kind": "estimate",
+        "estimated_usd": billed["usd"],
+        "estimated_display": billed["display"],
+        # Backward-compatible aliases for older CLI/tests. These are estimates,
+        # not the official Modal invoice.
         "billed_usd": billed["usd"],
         "billed_display": billed["display"],
         "billed": billed,

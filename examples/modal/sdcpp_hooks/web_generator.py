@@ -5,8 +5,7 @@ import hashlib
 import io
 import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from .recipes import apply_recipe
 
@@ -102,13 +101,10 @@ class ModalGenerator:
         """Stage every artifact on CPU and wait for the shared Volume commit."""
         if not items:
             return []
-        import os
-
         from .deployed import ensure_deployed, storage_function
         from .meter import bind_task
         from .modal_meter import billed_remote, billed_service
 
-        os.environ["SDCPP_GPU"] = gpu
         ensure_deployed()
         requests = self._requests(items)
 
@@ -179,8 +175,17 @@ class ModalGenerator:
         gpu: str,
         job_id: str = "",
         parallelism: int = 1,
+        existing_calls: Mapping[str, str] | None = None,
+        on_spawn: Callable[[str, str], None] | None = None,
+        on_done: Callable[[str, str], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> Iterator[dict[str, Any]]:
-        """Run a prepared batch with exactly 1, 2 or 4 concurrent GPU inputs."""
+        """Run a prepared batch with a bounded set of durable Modal FunctionCalls.
+
+        Unlike a ThreadPoolExecutor full of blocking `.remote()` calls, this uses
+        `.spawn()` so call IDs can be persisted, cancelled, and re-attached after
+        the local Web process restarts. At most `parallelism` calls are active.
+        """
         if not items:
             return
         if len(items) != len(requests):
@@ -189,52 +194,82 @@ class ModalGenerator:
         if parallelism not in ALLOWED_PARALLELISM:
             raise ValueError("parallelism must be one of 1, 2, 4")
 
+        import modal
+
         from .deployed import WEB_GPU_POOL_MAX, engine
-        from .meter import bind_task
-        from .modal_meter import billed_remote, billed_service
 
         recipe = str(items[0]["recipe"])
         if any(str(item["recipe"]) != recipe for item in items):
             raise ValueError("one GPU batch job must use a single recipe")
+        remote_engine = engine(gpu=gpu, recipe=recipe, max_containers=WEB_GPU_POOL_MAX)
+        persisted = dict(existing_calls or {})
+        active: dict[str, tuple[Any, int]] = {}
+        next_index = 0
 
-        # max_containers stays fixed at 4 for every Web recipe pool. Actual fan-out
-        # is controlled by the number of simultaneous remote calls below, so jobs
-        # using 1/2/4 still reuse the same warm model-loaded pool.
-        remote_engine = engine(
-            gpu=gpu,
-            recipe=recipe,
-            max_containers=WEB_GPU_POOL_MAX,
-        )
+        def notify_spawn(image_id: str, call_id: str) -> None:
+            if on_spawn:
+                on_spawn(image_id, call_id)
 
-        def invoke(index: int) -> dict[str, Any]:
+        def notify_done(image_id: str, status: str) -> None:
+            if on_done:
+                on_done(image_id, status)
+
+        def add_call(index: int) -> None:
             item = items[index]
-            request = requests[index]
-            with bind_task(
-                job_id=job_id,
-                image_id=item.get("id"),
-                recipe=recipe,
-                gpu=gpu,
-            ):
-                with billed_service("gpu"):
-                    result = billed_remote(
-                        remote_engine.generate,
-                        request.to_dict(),
-                        name="generate",
-                        gpu=True,
-                        cost_extra={"parallelism": parallelism, "model_pool": recipe},
-                    )
-            return self._result(item, request, result)
+            image_id = str(item["id"])
+            existing_id = persisted.pop(image_id, "")
+            if existing_id:
+                call = modal.FunctionCall.from_id(existing_id)
+                call_id = existing_id
+            else:
+                call = remote_engine.generate.spawn(requests[index].to_dict())
+                call_id = str(call.object_id)
+                notify_spawn(image_id, call_id)
+            active[call_id] = (call, index)
 
-        if parallelism == 1 or len(items) == 1:
-            for index in range(len(items)):
-                yield invoke(index)
-            return
+        while next_index < len(items) and len(active) < min(parallelism, len(items)):
+            add_call(next_index); next_index += 1
 
-        workers = min(parallelism, len(items))
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="sdcpp-gpu") as pool:
-            futures = [pool.submit(invoke, index) for index in range(len(items))]
-            for future in as_completed(futures):
-                yield future.result()
+        try:
+            while active:
+                if cancelled and cancelled():
+                    for call_id, (call, index) in list(active.items()):
+                        try:
+                            call.cancel()
+                        finally:
+                            notify_done(str(items[index]["id"]), "cancelled")
+                            active.pop(call_id, None)
+                    return
+
+                progressed = False
+                for call_id, (call, index) in list(active.items()):
+                    try:
+                        result = call.get(timeout=0)
+                    except TimeoutError:
+                        continue
+                    except Exception:
+                        notify_done(str(items[index]["id"]), "failed")
+                        active.pop(call_id, None)
+                        raise
+                    item = items[index]
+                    request = requests[index]
+                    notify_done(str(item["id"]), "completed")
+                    active.pop(call_id, None)
+                    progressed = True
+                    yield self._result(item, request, result)
+                    if next_index < len(items):
+                        add_call(next_index); next_index += 1
+                if not progressed and active:
+                    time.sleep(0.1)
+        finally:
+            if cancelled and cancelled():
+                for call_id, (call, index) in list(active.items()):
+                    try:
+                        call.cancel()
+                    except Exception:
+                        pass
+                    notify_done(str(items[index]["id"]), "cancelled")
+                    active.pop(call_id, None)
 
     def generate_job(
         self,

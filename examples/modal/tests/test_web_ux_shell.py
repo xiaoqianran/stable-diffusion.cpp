@@ -29,3 +29,15 @@ def test_redesigned_web_modules_exist():
         "ux.css",
     ):
         assert (STATIC / name).is_file(), name
+
+
+def test_legacy_web_assets_are_removed():
+    for name in ("app.js", "batch_controls.js", "queue.js", "styles.css", "queue.css"):
+        assert not (STATIC / name).exists(), name
+
+
+def test_runs_ui_labels_local_cost_as_estimate():
+    text = (STATIC / "ux-runs.js").read_text(encoding="utf-8")
+    assert "估算成本" in text
+    assert "当前成本" not in text
+    assert "new EventSource" in text

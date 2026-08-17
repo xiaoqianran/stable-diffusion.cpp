@@ -154,7 +154,6 @@ def main(argv: list[str] | None = None) -> int:
     # GPU phase starts only after the CPU staging phase completed. The deployed
     # Cls is persistent, while its containers still autoscale to zero when idle.
     gpu = _runtime_gpu(command.recipe)
-    os.environ["SDCPP_GPU"] = gpu
     print(f"gpu {gpu}")
     with billed_service("gpu"):
         remote_engine = engine(gpu=gpu)
@@ -163,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             payload,
             name="generate",
             gpu=True,
+            gpu_name=gpu,
         )
         host = result.get("host")
         if isinstance(host, dict):
@@ -251,9 +251,15 @@ def _run_web(command) -> int:
 
     import uvicorn
 
+    host = str(command.host).strip()
+    loopback = host.lower() in {"127.0.0.1", "localhost", "::1"}
+    if not loopback and not os.environ.get("SDCPP_WEB_TOKEN"):
+        print("Refusing non-loopback Web binding without SDCPP_WEB_TOKEN authentication.", file=sys.stderr)
+        print("Set SDCPP_WEB_TOKEN to protect the Web UI and API.", file=sys.stderr)
+        return 2
     if command.dry_run:
         os.environ["SDCPP_WEB_DRY_RUN"] = "1"
-    url = f"http://{command.host}:{command.port}"
+    url = f"http://{host}:{command.port}"
     print(f"sdcpp-modal web → {url}")
     if command.dry_run:
         print("Local FastAPI dry-run; Modal deployment is not required.")
@@ -264,7 +270,7 @@ def _run_web(command) -> int:
             webbrowser.open(url)
         except Exception:
             pass
-    uvicorn.run("web.server:app", host=command.host, port=command.port, reload=False, log_level="info")
+    uvicorn.run("web.server:app", host=host, port=command.port, reload=False, log_level="info")
     return 0
 
 

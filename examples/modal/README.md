@@ -1,25 +1,26 @@
-# Modal CLI
+# Modal CLI / Image Lab
 
-```bash
-cd examples/modal
-uv sync
-uv run modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
+`examples/modal` 把本仓库的 `sd-cli` / `sd-server` 放到 Modal 上运行，同时把**模型下载、GPU 推理、本地任务状态**分开：
 
-uv run python sdcpp_modal.py prefetch
-uv run python sdcpp_modal.py prefetch z-image-turbo
-uv run python sdcpp_modal.py prefetch --all
-uv run python sdcpp_modal.py prefetch --status
-uv run python sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turbo -o zimage.png
-uv run python sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
-uv run python sdcpp_modal.py web
-uv run python sdcpp_modal.py cost
+```text
+Create / CLI
+    │
+    ├─ CPU storage worker ──> Modal Volume: sdcpp-models
+    │                         原子下载 + SHA256 manifest + source index
+    │
+    └─ durable Job / FunctionCall IDs
+              │
+              └─ SDEngine(recipe, gpu)
+                     └─ @modal.enter -> sd-server -> 模型常驻到 scale-down
 ```
 
-Run the official `sd-cli` on [Modal](https://modal.com) when the local machine cannot host the model.
+默认 CUDA 镜像来自本 fork：
 
-This example does not change the C API, local CLI, or server. It treats `sd-cli` as a black box: each GPU container probes `--help` and only forwards flags that exist on that binary.
+```text
+ghcr.io/xiaoqianran/stable-diffusion.cpp:master-cuda
+```
 
-Weights live on Modal Volume `sdcpp-models`. The default image is `ghcr.io/leejet/stable-diffusion.cpp:master-cuda`.
+CI/CD 部署使用不可变标签 `sha-<git-sha>-cuda`，并把 Web / Modal deployment / image revision 放进 runtime identity，避免“本地代码已更新、远程 worker 还是旧版”。
 
 ## Setup
 
@@ -29,401 +30,343 @@ uv sync
 uv run modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
 ```
 
-`uv sync` installs `modal[api-proxy-support]` plus the local web extras into `.venv`. After that, either `uv run python sdcpp_modal.py …` or `source .venv/bin/activate`. Remote CPU/GPU images stay on the official `sd-cli` container; they do not run `uv sync`. HTTP CONNECT / SOCKS proxies use the usual env vars:
-
-```bash
-export HTTPS_PROXY=http://127.0.0.1:7890
-# or ALL_PROXY=socks5://127.0.0.1:1080
-```
-
-Set `MODAL_DISABLE_API_PROXY=1` to turn proxy support off. Without `uv`, the same extra is `python3 -m pip install 'modal[api-proxy-support]>=1.0' huggingface_hub fastapi uvicorn pillow python-multipart pytest httpx`.
-
-Public Hugging Face files work without a token. For gated models or Civitai:
+公共 Hugging Face 文件不需要 token。gated 模型或 Civitai：
 
 ```bash
 export HF_TOKEN=...
 export CIVITAI_TOKEN=...
-# optional persistent secret
+# 可选：持久 Modal Secret
 modal secret create sdcpp-tokens HF_TOKEN="$HF_TOKEN" CIVITAI_TOKEN="$CIVITAI_TOKEN"
 ```
 
-Do not put tokens in git.
+不要把 token 写入 git。
 
 ## CLI
 
 ```bash
-python3 sdcpp_modal.py prefetch --all
-python3 sdcpp_modal.py prefetch --status
-python3 sdcpp_modal.py pull --all
-python3 sdcpp_modal.py ls
-python3 sdcpp_modal.py probe
-python3 sdcpp_modal.py generate -p "a lovely cat" --recipe sd15 -o cat.png --publish
-python3 sdcpp_modal.py publish cat.png --recipe sd15 -p "a lovely cat"
-python3 sdcpp_modal.py web
-python3 sdcpp_modal.py cost
-python3 sdcpp_modal.py cost --official
+uv run python sdcpp_modal.py prefetch --all
+uv run python sdcpp_modal.py prefetch --status
+uv run python sdcpp_modal.py ls
+uv run python sdcpp_modal.py probe
+uv run python sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turbo -o zimage.png
+uv run python sdcpp_modal.py generate -p "A fluffy orange cat" --recipe ideogram4 -o ideogram4.png
+uv run python sdcpp_modal.py web
+uv run python sdcpp_modal.py cost
+uv run python sdcpp_modal.py cost --official
 ```
 
-| Command | Where it runs | What it does |
+| Command | Where | Behavior |
 | --- | --- | --- |
-| `prefetch` | CPU | download a recipe (default `z-image-turbo`), `--all`, or `--status` onto volume `sdcpp-models` |
-| `pull` | CPU | same downloads by raw URI, `--recipe`, or `--all` |
-| `put` | CPU | upload a small local file (init image, mask) to `uploads/` |
-| `ls` | CPU | list files already on that volume |
-| `probe` | CUDA image, no GPU | print remote `sd-cli` flags |
-| `generate` | CPU, then GPU (`SDCPP_GPU`, default `L40S`) | CPU pulls missing weights; GPU only loads them and runs `sd-cli` |
-| `publish` | local + Hugging Face | upload a PNG into the multi-model gallery dataset |
-| `web` | local FastAPI | 生成 / 批量 / 任务 / 成本 / 画廊 workbench on `:7863` |
-| `cost` | local (+ optional Modal API) | print the call-chain ledger (see [成本教程](#成本教程)) |
+| `prefetch` / `pull` | CPU | 下载并验证模型，写入 `sdcpp-models` |
+| `ls` | CPU | 查看 Volume artifact |
+| `probe` | CUDA image / CPU | 查看远程 `sd-cli` 能力 |
+| `generate` | CPU → GPU | CPU 先保证 artifact 完整，再启动 GPU |
+| `web` | local FastAPI | **创建 / 运行 / 图库** Image Lab |
+| `cost` | local | 本地成本**估算**；`--official` 另读 Modal 官方账期 summary |
 
-`prefetch` is the CPU path that writes recipe weights onto volume `sdcpp-models`. No GPU is used. Omit the recipe name to prefetch `z-image-turbo`. `--all` fetches every bundled recipe. `--status` lists which recipe files are already on the volume. `pull` is the same download with raw URIs. `generate` also calls this CPU ensure step for any missing files before the GPU run.
+## Artifact integrity
 
-`generate` first ensures missing URIs are on the volume **from a CPU container**. The GPU container only reloads those files and runs `sd-cli`. It does not download weights.
+模型缓存不是“文件存在就算成功”。生产路径执行：
 
-CPU pulls use `aria2c` (`-x 16 -s 16 -c -k 1M`) when it is on the image, then the Hugging Face CLI, then urllib. Several missing files download in parallel (`SDCPP_PULL_WORKERS`, default 4). Tokens stay in headers or `CIVITAI_TOKEN` query params and are redacted in logs.
+1. 下载到同目录唯一 `.partial-*` 文件；
+2. 下载完整后用 `os.replace()` 原子发布；
+3. 写 `.sdcpp.json`，记录 source、实际 resolved URL、bytes、SHA256；
+4. 写 `.sdcpp-index/<sha256(source)>.json`，把原始 URI 映射到已验证的 immutable artifact；
+5. GPU / `sd-server` 使用 `allow_download=False`，只读 source index，不联网下载。
+
+`hf://org/repo/file` 第一次在 CPU 端会把移动的 `main` 解析成 Hugging Face commit SHA。之后同一 Volume 默认一直复用这个 immutable snapshot。若明确要刷新 `main`：
 
 ```bash
-python3 sdcpp_modal.py pull --all
-python3 sdcpp_modal.py generate -p '{"high_level_description":"A fluffy orange cat"}' --recipe ideogram4 -o ideogram4.png --publish
+export SDCPP_REFRESH_MOVING_HF=1
+uv run python sdcpp_modal.py prefetch --all
+unset SDCPP_REFRESH_MOVING_HF
 ```
 
-Do not convert Ideogram4 weights yourself. `pull --recipe ideogram4` downloads the prebuilt GGUF pair from [`leejet/ideogram-4-GGUF`](https://huggingface.co/leejet/ideogram-4-GGUF) (`ideogram4-Q4_0.gguf` and `ideogram4_uncond-Q4_0.gguf`), plus the FLUX.2 VAE and Qwen3-VL GGUF. There is no `convert` command in this CLI. The FLUX.2 VAE is gated, so set `HF_TOKEN`. Ideogram4 prompts must be JSON.
+直接 HTTP URL 的缓存 key 包含完整 URL 的 SHA256 与 hostname，因此两个相同 basename 不会互相覆盖。
 
-The default GPU is `L40S`. `ideogram4` and `flux2-dev` default to `RTX-PRO-6000` (96 GB Blackwell) unless `SDCPP_GPU` is set. A 24 GB `L4` can OOM on the diffusion compute buffer. A10 and A100 are blocked. Modal's live GPU name is `RTX-PRO-6000`; `RTX6000` is accepted as an alias.
+Modal Volume 上的 artifact writer 默认 `max_containers=1`。下载器内部仍可用 `SDCPP_PULL_WORKERS=4` 并行拉不同文件，但不会让多个 Modal writer container 同时提交同一路径。
+
+## Persistent model pools
+
+Web 的 bundled recipe 使用参数化：
+
+```text
+SDEngine(recipe=<recipe>, gpu_name=<gpu>)
+```
+
+`@modal.enter()` 启动 `sd-server` 并加载模型一次。同一 warm container 后续 Prompt 走本机 HTTP，不再每张图新启 `sd-cli`。如果 child `sd-server` 崩溃，worker 会检查进程状态并重启一次；第二次仍失败则让该 Modal input 失败，而不是把一个坏 container 永久留在池里。
+
+通用 CLI 仍保留 `sd-cli` 路径，以兼容任意 CLI flags。
+
+CPU/GPU idle window 分开：
+
+```text
+SDCPP_CPU_IDLE_SECONDS=10
+SDCPP_GPU_IDLE_SECONDS=60
+```
+
+`min_containers=0`，所以最终仍会 scale to zero。60 秒 GPU 窗口是交互延迟与空闲费用之间的折中。
+
+## Batch scheduling
+
+Web batch 有三个档位：
+
+| UI | parallelism | 最大 active GPU calls |
+| --- | ---: | ---: |
+| 省钱 | 1 | 1 |
+| 平衡 | 2 | 2 |
+| 最快 | 4 | 4 |
+
+独立 Job 默认仍由本地 GPU job scheduler 串行拥有 GPU stage，因此两个 batch 不会把 `4 × 4` 叠成不可控的 fan-out。同 recipe/GPU 使用 affinity 调度，提高 warm pool 命中率，并有 streak/window 上限防止 starvation。
+
+批量实现使用 Modal `Function.spawn()`，只维持 1/2/4 个 active `FunctionCall`；不会先创建整个 10000 张 batch 的 Future。每个 call ID 都写入 SQLite，便于取消和恢复。
+
+## Durable jobs, cancel, restart recovery
+
+Web job metadata 保存在：
+
+```text
+~/.cache/sdcpp-modal/web/sdcpp-web.db
+```
+
+可用 `SDCPP_WEB_DATA` 改路径。数据库启用 WAL、`busy_timeout` 和常用索引。
+
+任务不再依赖“daemon thread 活着才算活着”：
+
+- 本地 CPU staging 使用有界 `ThreadPoolExecutor`，默认 `SDCPP_CPU_JOB_WORKERS=4`；
+- Modal GPU call ID 持久化到 `modal_calls`；
+- Web 进程重启会把非终态 Job 标为 recovering，并通过 `FunctionCall.from_id()` 重新挂回尚未完成的远程 call；
+- 点击 **停止** 会调用 `FunctionCall.cancel()`，不仅仅是把本地 UI 改成 cancelled；
+- 远程 call 完成后，在 PNG 原子写盘前保留 call ID，因此本地恰好崩溃也可以再次读取 Modal 已完成结果，而不必重复生成。
+
+历史 Job 不会全部塞给顶栏：`GET /api/jobs` 默认只返回最近 50 条，可用 `limit/offset/status` 分页。
+
+终态数据清理：
+
+```bash
+curl -X POST 'http://127.0.0.1:7863/api/maintenance/cleanup?keep_days=30'
+```
+
+会删除过期终态 Job 及本地 output 文件。
 
 ## Web
 
-The local workbench follows the [modal-sana](https://github.com/xiaoqianran/modal-sana) split: Interface / Core / Modal. `python3 sdcpp_modal.py web` starts FastAPI on `http://127.0.0.1:7863`. It is **not** `modal serve`. The page owns jobs, SSE progress, and a local gallery. GPU inference still goes through the existing `sdcpp-storage` + `sdcpp-cli` workers and the seven recipes.
-
 ```bash
-uv sync
 uv run python sdcpp_modal.py web
-uv run python sdcpp_modal.py web --dry-run   # placeholder images, no GPU
+uv run python sdcpp_modal.py web --dry-run
 ```
 
-Pages: **生成**, **批量**, **任务**, **成本**, **画廊**, **设置**. The static UI is plain HTML / CSS / JS talking to FastAPI, in Simplified Chinese. Default recipe is `z-image-turbo`. Selecting Ideogram 4 or FLUX.2 Dev also selects RTX PRO 6000. Job metadata lives in `~/.cache/sdcpp-modal/web/` (override with `SDCPP_WEB_DATA`). `--dry-run` or `SDCPP_WEB_DRY_RUN=1` writes prompt placeholders so the UI can be tested without Modal.
+打开 <http://127.0.0.1:7863>。
 
-Idle CPU and GPU containers scale to zero after `SDCPP_IDLE_SECONDS` (default **10**). `min_containers=0`, so nothing stays warm when there are no requests.
+一级入口只有：
 
-How to read every Modal charge, the per-second rate, and the matching job: **[成本教程](#成本教程)**.
+- **创建**：单张与批量；
+- **运行**：真实 Job phase、GPU queue、结果与估算成本；
+- **图库**：50 / 100 / 200 分页、Prompt 搜索、模型筛选、图片详情。
 
-Common `sd-cli` flags are first-class (`--vae`, `--diffusion-model`, `--init-img`, `--control-net`, `--taesd`, `--sampling-method`, ...). Any other remote flag can be appended and is forwarded if `probe` sees it:
+运行详情通过 SSE `GET /api/jobs/{id}/events` 更新，不再每 1.8 秒整页轮询。顶栏只每 5 秒刷新最近任务和全局 GPU queue。
+
+### TXT / JSONL
+
+TXT：每行一个 Prompt。
+
+JSONL 是真正解析后的结构，而不是把整行 JSON 当 Prompt：
+
+```jsonl
+{"prompt":"a cat","seed":42}
+{"prompt":"a dog","seed":99,"count":2}
+```
+
+当前 JSONL per-line 字段为 `prompt`、`seed`、`count`。模型/GPU/尺寸/steps 是整个 Job 级配置。
+
+Ideogram 4 用户可以直接输入普通文本；API 会自动转换为：
+
+```json
+{"high_level_description":"A fluffy orange cat"}
+```
+
+也可以自己传合法 JSON object。
+
+### API limits
+
+后端本身会验证资源上限，不依赖 HTML `max=`：
+
+| Variable | Default |
+| --- | ---: |
+| `SDCPP_MAX_PROMPT_CHARS` | 20000 |
+| `SDCPP_MAX_PROMPTS` | 5000 |
+| `SDCPP_MAX_TOTAL_IMAGES` | 10000 |
+| `SDCPP_MAX_COUNT` | 100 |
+| `SDCPP_MAX_DIMENSION` | 4096 |
+| `SDCPP_MAX_STEPS` | 200 |
+| `SDCPP_MAX_UPLOAD_BYTES` | 10 MiB |
+
+### Public binding / authentication
+
+默认 `127.0.0.1` 不需要认证。如果把 Web bind 到 `0.0.0.0`、局域网地址或公网地址，CLI 会拒绝启动，除非设置：
 
 ```bash
-python3 sdcpp_modal.py generate -p "a cat" --recipe sd15 --offload-to-cpu --type f16
+export SDCPP_WEB_TOKEN='a-long-random-secret'
+uv run python sdcpp_modal.py web --host 0.0.0.0
 ```
 
-Unknown flags are dropped and printed as `dropped_fields` instead of failing the run.
+浏览器使用 HTTP Basic auth（密码填这个 token）；API 也接受：
 
-### Model URIs
+```text
+Authorization: Bearer <SDCPP_WEB_TOKEN>
+```
+
+这避免公开 Web 入口被陌生人直接调用你的付费 Modal GPU。
+
+## Deployment identity and CI/CD
+
+仓库构建 CUDA image 时同时发布：
+
+```text
+master-cuda
+sha-<full-git-sha>-cuda
+```
+
+`.github/workflows/modal-deploy.yml` 会在 master 的 CI 成功后（且仓库配置了 `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` secrets）部署：
+
+```text
+SDCPP_DEPLOY_SHA=<commit>
+SDCPP_IMAGE=ghcr.io/xiaoqianran/stable-diffusion.cpp:sha-<commit>-cuda
+```
+
+部署后会调用 storage/GPU identity endpoint 验证 SHA 一致。不配置 secrets 时 workflow 明确 skip，不会把 token 硬编码到仓库。
+
+本地 `ensure_deployed()` 也检查 deployment identity。旧版没有 identity endpoint 时会滚动升级；如果已有 identity endpoint 但 Modal 控制面临时不可达，会把错误上抛，**不会因为一次网络错误擅自重新 deploy**。
+
+手工强制部署仍可用：
+
+```bash
+SDCPP_FORCE_DEPLOY=1 uv run python -c \
+  'from sdcpp_hooks.deployed import ensure_deployed; ensure_deployed(force=True)'
+```
+
+## Model URIs
 
 | URI | Meaning |
 | --- | --- |
-| `hf://org/repo/file.safetensors` | Hugging Face file at revision `main` |
-| `hf://org/repo@rev/file.gguf` | Hugging Face file at `rev` |
-| `civitai://128713` | Civitai **model version** id |
-| `https://...` | Direct download |
+| `hf://org/repo/file.safetensors` | CPU 首次解析 `main` -> commit SHA，并在 Volume 固定 snapshot |
+| `hf://org/repo@rev/file.gguf` | 明确 revision |
+| `civitai://128713` | Civitai model version id |
+| `https://...` | 直接下载；full URL 哈希防 basename collision |
+| `/models/...` | Volume 上显式本地路径 |
 
-`HF_ENDPOINT` can point at a Hugging Face mirror.
+七个 bundled recipes：`z-image-turbo`、`ideogram4`、`flux2-klein`、`flux2-dev`、`sdxl-turbo`、`sd2`、`sd15`。`ideogram4` / `flux2-dev` 默认 `RTX-PRO-6000`，其余默认 `L40S`。A10 / A100 在本 wrapper 中被阻止；L4 可选但大模型可能 OOM。
 
-For a multi-gigabyte local checkpoint, use `modal volume put` instead of `put`:
+## Environment
 
-```bash
-modal volume put sdcpp-models ./v1-5-pruned-emaonly.safetensors hf/local/v1-5-pruned-emaonly.safetensors
-```
-
-Then pass `--model /models/hf/local/v1-5-pruned-emaonly.safetensors`.
-
-## Bundled models
-
-This CLI ships **seven** recipes and nothing else. `pull --all` downloads every file they need onto volume `sdcpp-models`. Other Modal recipes (SD-Turbo, SSD-1B, Dreamlike, FLUX.1, and same-family klein/base variants) were removed.
-
-Artificial Analysis text-to-image Elo is from the [open-weights leaderboard](https://artificialanalysis.ai/image/leaderboard/text-to-image/open-weights) on 2026-08-16. SDXL-Turbo / SD 2.1 / SD 1.5 are older checkpoints and are not ranked there the same way.
-
-| Recipe | Model | AA Elo | Defaults | Volume files under `/models/` |
-| --- | --- | --- | --- | --- |
-| `ideogram4` | Ideogram 4.0 Q4_0 | 1217 | 1024², 20 steps, cfg 4.0 | `hf/leejet/ideogram-4-GGUF/main/ideogram4-Q4_0.gguf`, `ideogram4_uncond-Q4_0.gguf`; shared FLUX.2 VAE; `hf/unsloth/Qwen3-VL-8B-Instruct-GGUF/main/Qwen3-VL-8B-Instruct-Q4_K_M.gguf` |
-| `flux2-klein` | FLUX.2 [klein] 9B Q4_0 | 1149 | 1024², 4 steps, cfg 1.0 | `hf/leejet/FLUX.2-klein-9B-GGUF/main/flux-2-klein-9b-Q4_0.gguf`; shared FLUX.2 VAE; `hf/unsloth/Qwen3-8B-GGUF/main/Qwen3-8B-Q4_K_M.gguf` |
-| `flux2-dev` | FLUX.2 [dev] Q4_K_S | 1200 | 1024², 20 steps, cfg 1.0, euler | `hf/city96/FLUX.2-dev-gguf/main/flux2-dev-Q4_K_S.gguf`; shared FLUX.2 VAE; `hf/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/main/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf` |
-| `z-image-turbo` | Z-Image Turbo Q3_K | 1131 | 1024², 8 steps, cfg 1.0 | `hf/leejet/Z-Image-Turbo-GGUF/main/z_image_turbo-Q3_K.gguf`; `hf/black-forest-labs/FLUX.1-schnell/main/ae.safetensors`; `hf/unsloth/Qwen3-4B-Instruct-2507-GGUF/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf` |
-| `sdxl-turbo` | SDXL-Turbo fp16 | — | 512², 4 steps, cfg 1.0, euler | `hf/stabilityai/sdxl-turbo/main/sd_xl_turbo_1.0_fp16.safetensors` |
-| `sd2` | Stable Diffusion 2.1 | — | 512², 20 steps, cfg 7.0 | `hf/Manojb/stable-diffusion-2-1-base/main/v2-1_512-ema-pruned.safetensors` |
-| `sd15` | Stable Diffusion 1.5 | — | 512², 20 steps, cfg 7.0 | `hf/stable-diffusion-v1-5/stable-diffusion-v1-5/main/v1-5-pruned-emaonly.safetensors` |
-
-Shared FLUX.2 VAE (gated): `hf/black-forest-labs/FLUX.2-dev/main/ae.safetensors`. Used by Ideogram 4.0, FLUX.2 [klein], and FLUX.2 [dev]. Z-Image Turbo uses the Flux.1 schnell VAE, not the Flux.2 VAE. Qwen3-8B (klein) is not Qwen3-VL-8B (Ideogram4).
-
-GGUF diffusion files still need their VAE and text-encoder companions. `pull --all` is the CPU path that fetches the full set.
-
-### Volume inventory (2026-08-16)
-
-CPU `pull --all` on volume `sdcpp-models` left only these weight files (77.60 GiB). Leftover FLUX.1-dev and the old extra recipes were deleted.
-
-| Path under `/models/` | Bytes | Size |
-| --- | ---: | ---: |
-| `hf/leejet/ideogram-4-GGUF/main/ideogram4-Q4_0.gguf` | 5643820832 | 5.26 GiB |
-| `hf/leejet/ideogram-4-GGUF/main/ideogram4_uncond-Q4_0.gguf` | 5643820832 | 5.26 GiB |
-| `hf/unsloth/Qwen3-VL-8B-Instruct-GGUF/main/Qwen3-VL-8B-Instruct-Q4_K_M.gguf` | 5027785568 | 4.68 GiB |
-| `hf/black-forest-labs/FLUX.2-dev/main/ae.safetensors` | 336211292 | 0.31 GiB |
-| `hf/leejet/FLUX.2-klein-9B-GGUF/main/flux-2-klein-9b-Q4_0.gguf` | 5616208032 | 5.23 GiB |
-| `hf/unsloth/Qwen3-8B-GGUF/main/Qwen3-8B-Q4_K_M.gguf` | 5027784512 | 4.68 GiB |
-| `hf/city96/FLUX.2-dev-gguf/main/flux2-dev-Q4_K_S.gguf` | 19299128288 | 17.97 GiB |
-| `hf/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/main/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf` | 14333922848 | 13.35 GiB |
-| `hf/leejet/Z-Image-Turbo-GGUF/main/z_image_turbo-Q3_K.gguf` | 3143559104 | 2.93 GiB |
-| `hf/black-forest-labs/FLUX.1-schnell/main/ae.safetensors` | 335304388 | 0.31 GiB |
-| `hf/unsloth/Qwen3-4B-Instruct-2507-GGUF/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | 2497281120 | 2.33 GiB |
-| `hf/stabilityai/sdxl-turbo/main/sd_xl_turbo_1.0_fp16.safetensors` | 6938081905 | 6.46 GiB |
-| `hf/Manojb/stable-diffusion-2-1-base/main/v2-1_512-ema-pruned.safetensors` | 5214604494 | 4.86 GiB |
-| `hf/stable-diffusion-v1-5/stable-diffusion-v1-5/main/v1-5-pruned-emaonly.safetensors` | 4265146304 | 3.97 GiB |
-
-```bash
-python3 sdcpp_modal.py pull --all
-python3 sdcpp_modal.py generate -p "a lovely cat" --recipe flux2-klein -o klein.png
-python3 sdcpp_modal.py generate -p "a lovely cat" --recipe flux2-dev -o flux2.png
-python3 sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turbo -o zimage.png
-```
-
-`ideogram4`, `flux2-klein`, `flux2-dev`, and `z-image-turbo` also pass `--diffusion-fa` and `--offload-to-cpu`.
-
-### Environment
-
-| Variable | Default |
+| Variable | Default / meaning |
 | --- | --- |
-| `SDCPP_IMAGE` | `ghcr.io/leejet/stable-diffusion.cpp:master-cuda` |
-| `SDCPP_GPU` | unset: `L40S`, or `RTX-PRO-6000` for `ideogram4` / `flux2-dev` (also `L4`; A10 and A100 are blocked) |
-| `SDCPP_IDLE_SECONDS` | `10` (CPU and GPU scale to zero after this idle window) |
-| `SDCPP_SECRET` | `sdcpp-tokens` (used only if that Modal secret exists) |
-| `SDCPP_PULL_WORKERS` | `4` (parallel CPU downloads) |
-| `HF_ENDPOINT` | `https://huggingface.co` |
-| `SDCPP_GALLERY_DATASET` | `seachen/stable-diffusion-cpp-gallery` |
-| `SDCPP_GITHUB_REPO` | `xiaoqianran/stable-diffusion.cpp` |
+| `SDCPP_IMAGE` | `ghcr.io/xiaoqianran/stable-diffusion.cpp:master-cuda`; CI deploy uses immutable SHA tag |
+| `SDCPP_DEPLOY_SHA` | 当前部署 commit identity |
+| `SDCPP_GPU` | CLI override；Web 把实际 GPU 作为 SDEngine 参数传递 |
+| `SDCPP_CPU_IDLE_SECONDS` | `10` |
+| `SDCPP_GPU_IDLE_SECONDS` | `60` |
+| `SDCPP_GPU_MAX_CONTAINERS` | generic CLI pool 默认 `1` |
+| `SDCPP_WEB_GPU_POOL_MAX` | Web recipe pool 最大 `4` |
+| `SDCPP_GPU_JOB_MAX_ACTIVE` | 独立 Web Job 同时拥有 GPU stage 的数量，默认 `1` |
+| `SDCPP_CPU_JOB_WORKERS` | 本地 CPU job workers，默认 `4` |
+| `SDCPP_PULL_WORKERS` | 单个 CPU writer 内并行下载数量，默认 `4` |
+| `SDCPP_WEB_TOKEN` | 非 loopback Web 必需 |
+| `SDCPP_WEB_DATA` | 本地 Job/图库数据目录 |
 | `SDCPP_COST_LOG` | `~/.cache/sdcpp-modal/cost.jsonl` |
+| `SDCPP_COST_WORKER_LOG` | 默认关闭；仅在你明确给安全的 container-local 路径时记录 worker lifetime |
+| `SDCPP_REFRESH_MOVING_HF` | `1` 时主动重新解析 HF `main` |
 
 ## 成本教程
 
-工作台侧栏的 **成本** 就是 Modal 账本。每一笔 `app.run` / `.remote` 都会留下一行：调用链、精确到秒的费率、`费率 × 秒数 = 这一笔`、以及对应的 `job_…` / `img_…`。计费不进 `sd-cli`，只在 `sdcpp_hooks/cost.py` 和 `sdcpp_hooks/modal_meter.py`。
+**重要：Image Lab 展示的是“估算成本”，不是 Modal 官方实际账单。**
 
-下面按顺序做一遍：先演练（$0），再真生成，再读调用链。
-
-### 1. 打开工作台
+本地 estimator 使用静态 rate snapshot，根据本机观察到的 `.remote()` 墙钟时间做近似。它无法精确包含所有 container idle tail、retry、credit、折扣和账单调整。真实账期请使用：
 
 ```bash
-cd examples/modal
-python3 -m pip install 'fastapi>=0.115' 'uvicorn>=0.30' pillow python-multipart 'modal>=0.64'
-python3 sdcpp_modal.py web
+python3 sdcpp_modal.py cost --official
 ```
 
-浏览器打开 <http://127.0.0.1:7863>。左侧应有：生成 / 批量 / 任务 / **成本** / 画廊 / 设置。
+当前 SDK 读取 `Workspace.billing.summary()`；本仓库不再调用不存在的 `Workspace.billing.rates()`。
 
-还没装 Modal token、只想看页面时：
+### 1. Dry run
 
 ```bash
 python3 sdcpp_modal.py web --dry-run
 ```
 
-演练不会打 GPU，占位图仍会写成一条任务，成本页记 `local:dry_run` · **$0**。
+浏览器：<http://127.0.0.1:7863>。演练生成 placeholder，不调用 GPU，Job 的估算成本为 `$0`。
 
-### 2. 演练：确认任务能挂上账本
-
-1. 打开 **生成**。
-2. 提示词随便写，例如 `雨夜城市`。
-3. 配方用默认 `z-image-turbo`，显卡保持 `L40S`。
-4. 展开「尺寸与采样」，勾选 **演练（不调用 Modal / GPU）**。
-5. 点 **开始生成**。
-6. 打开 **任务**：费用列应是 `演练 · $0`。点任务编号，详情里有调用链。
-7. 打开 **成本**，或点费用跳到 `#/cost?job=job_…`。
-
-此时账本里至少有一行：
-
-| 调用链 | 时长 | 费用 | 每秒 | 任务 |
-| --- | --- | --- | --- | --- |
-| `local:dry_run` | 0.000s | $0 | $0/s | `job_…` |
-
-这只证明页面和任务对得上。**$0 不是 Modal 报价。**
-
-### 3. 真生成：一次完整调用链
-
-先保证 token 和权重在（`modal token set`，`export HF_TOKEN=…`，至少 `python3 sdcpp_modal.py pull --recipe z-image-turbo`）。
-
-1. **生成**页取消「演练」。
-2. 仍用 `z-image-turbo` + `L40S`，张数 1，点 **开始生成**。
-3. 等任务变成「已完成」，打开 **成本**。
-
-一次工作台出图会写下 **两条 session**，每条下面挂 `.remote`：
-
-```
-session:storage                          app.run(sdcpp-storage)  只有 CPU + 内存
-  ↳ remote:ensure_artifacts              确认 / 补齐卷上的权重
-session:gpu                              app.run(sdcpp-cli)      会话本身仍按 CPU 计价
-  ↳ remote:generate                      真正占 GPU 的那一段，挂 img_…
-```
-
-命令行同样记账，只是没有 `job_…`：
+### 2. 本地调用链
 
 ```bash
-python3 sdcpp_modal.py generate -p "a rainy city at night" --recipe z-image-turbo -o /tmp/zimage.png
 python3 sdcpp_modal.py cost
 ```
 
-`ideogram4` / `flux2-dev` 默认 `RTX-PRO-6000`（$3.03/h），其余默认 `L40S`（$1.95/h）。A10 / A100 已禁用。
+典型链仍可看到：
 
-### 4. 怎么读「成本」这一页
-
-页顶是 **已入账**：去重后的美元、笔数、计费秒数。下面一排是当前费率（L40S / L4 / RTX-PRO-6000 / CPU / 内存）。再下面是调用链表。
-
-| 列 | 含义 |
-| --- | --- |
-| 调用链 | `phase:name`。无缩进 = `app.run` 会话；`↳` = 这次会话里的 `.remote` |
-| 时长 | 这一段墙钟秒数，精确到 0.001s |
-| 费用 | `usd_per_second × duration_s`，量化到 $0.000001 |
-| 每秒 | 这一段资源的合计费率（GPU + 0.125 CPU + 1 GiB 内存） |
-| 拆分 | `gpu $…/s × Ns = $…` · `cpu …` · `memory …` |
-| GPU | `L40S` / `L4` / `RTX-PRO-6000`；CPU 会话为 — |
-| 任务 | `job_…`，点进任务详情 |
-| 图片 | `img_…`，只挂在 `remote:generate` 上 |
-
-同一页下方还有「按任务汇总」。任务详情里的「调用链」按钮等于 `#/cost?job=job_…`。
-
-设置页的「成本账本」是 jsonl 路径，默认 `~/.cache/sdcpp-modal/cost.jsonl`。
-
-### 5. 每秒费率
-
-数字来自 `modal.Workspace.billing.rates()`；Modal 连不上时用 2026-08-15 工作区 `pythonmoive` 的快照。工作台顶栏会写 `modal-billing-rates` 或 `fallback`。
-
-默认容器按 **0.125 CPU + 1 GiB 内存** 计价（Modal 未公布真实 reserved 时的假定）。
-
-| 资源 | 每小时 | 每秒（写入账本的精度） | 1 秒里还有 |
-| --- | ---: | ---: | --- |
-| L40S GPU | $1.95 | $0.000541667/s | + CPU + 内存 → **$0.000545531/s** |
-| L4 GPU | $0.80 | $0.000222222/s | + CPU + 内存 → **$0.000226087/s** |
-| RTX-PRO-6000 GPU | $3.03 | $0.000841667/s | + CPU + 内存 → **$0.000845531/s** |
-| CPU 0.125 核 | $0.04730 × 0.125 | **$0.000001642/s** | storage / session 会话 |
-| 内存 1 GiB | $0.008 | **$0.000002222/s** | 同上 |
-| CPU+内存（无 GPU） | — | **$0.000003865/s** | `session:*`、`remote:ensure_artifacts` |
-
-卷存储 $0.09/GiB·月 **不按次**写入这本账，只在官方账单里。
-
-### 6. 一笔钱怎么算
-
-```
-这一笔 = (GPU小时价/3600 + CPU小时价×0.125/3600 + 内存小时价×1/3600) × 秒数
+```text
+session:storage
+  remote:ensure_artifacts
+session:gpu
+  remote:generate
 ```
 
-对照一次真实出图（数字会随墙钟变化，费率不变）：
+Web API：
 
-| 调用 | 卡 | 时长 | 每秒 | 这一笔 |
-| --- | --- | ---: | ---: | ---: |
-| `remote:ensure_artifacts` | CPU | 8.000s | $0.000003865/s | $0.000031 |
-| `remote:generate` | L40S | 47.000s | $0.000545531/s | $0.025640 |
-| `remote:generate` | RTX-PRO-6000 | 33.000s | $0.000845531/s | $0.027903 |
-
-拆开 47s 的 L40S：
-
-```
-gpu    $0.000541667/s × 47.000s = $0.025458
-cpu    $0.000001642/s × 47.000s = $0.000077
-memory $0.000002222/s × 47.000s = $0.000104
-合计   $0.000545531/s × 47.000s = $0.025640
+```text
+GET /api/cost
+GET /api/cost?job_id=job_…
 ```
 
-所以：**Pro 6000 更快，但不一定更便宜。** 同样一张图，33s × $3.03/h ≈ $0.0279，47s × $1.95/h ≈ $0.0256。
+`GET /api/jobs` 和 `GET /api/jobs/{id}` 中的 `cost_usd` 为兼容字段；新的明确字段是 `estimated_cost_usd` / `cost_kind="estimate"`。
 
-### 7. 为什么不能把 session 和 remote 加在一起
+### 3. 静态估算费率示例
 
-`app.run()` 从进到出是一条 **session**。里面的 `.remote()` 是同一段墙钟上的 **remote**。两段重叠。把两行的 `费用` 列加起来会把 GPU 时间算两次。
+当前 fallback snapshot 中：
 
-已入账只加：
+- L40S 约 `$0.000545531/s`（GPU + 假定 CPU/内存）；
+- RTX-PRO-6000 约 `$0.000845531/s`。
 
-1. 所有 `remote`（以及演练的 `local`）
-2. `session` 比 remote 多出来的那几秒，按 **CPU+内存** 计价（连上 Modal、镜像拉取、会话收尾）
+这些数字用于**本地估算**，不代表 Modal 向当前账号最终结算的保证价格。
 
-GPU 容器 `@modal.enter` → `@modal.exit`（含空闲到 `SDCPP_IDLE_SECONDS` 缩成 0）写在 worker 账本，默认 `/models/.sdcpp-cost/events.jsonl`，需要卷可写。工作台「已入账」看的是本机 `SDCPP_COST_LOG`，不含那段空闲，除非你自己把 worker 行合进来。
+### 4. 为什么不能把 session 和 remote 加在一起
 
-### 8. 命令行和 API
+`session` 是本地调用窗口，`remote` 是窗口内真正远程调用的墙钟时间，两者会重叠。**不能把 session 和 remote 加在一起**，否则同一段时间会重复计算。
+
+worker container lifetime 默认不再 append 到共享 Volume 的 `/models/...events.jsonl`，因为多个 container 对同一 Volume 文件并发 append 不可靠。若确实需要 worker-local 估算日志，显式设置 `SDCPP_COST_WORKER_LOG` 到安全路径。
+
+### 5. Official billing
 
 ```bash
-# 本机账本：调用树 + 每秒费率 + 累计已入账
-python3 sdcpp_modal.py cost
-
-# 再加 Modal 官方账期汇总（metered / billed / 分项）
 python3 sdcpp_modal.py cost --official
 ```
 
-CLI 示例：
-
-```
-trace a1b2c3d4e5f6  0.025648  jobs job_ab12cd34ef  4 calls
-  session:storage  9.200s  $0.000036  $0.000003865/s  job job_ab12cd34ef
-    remote:ensure_artifacts  8.100s  $0.000031  $0.000003865/s  job job_ab12cd34ef
-  session:gpu  48.400s  $0.000187  $0.000003865/s  job job_ab12cd34ef
-    remote:generate  47.000s  $0.025640  $0.000545531/s  gpu L40S  job job_ab12cd34ef  img img_ff11aa22bb
-ledger /home/you/.cache/sdcpp-modal/cost.jsonl
-all-time billed estimate $0.025648
-per-second cpu $0.000001642/s  mem $0.000002222/s
-per-second gpu L40S $0.000545531/s  (1.95000/h)
-per-second gpu L4 $0.000226087/s  (0.80000/h)
-per-second gpu RTX-PRO-6000 $0.000845531/s  (3.03000/h)
-```
-
-工作台读同一本账。`GET /api/cost` 是全部 traces；`GET /api/cost?job_id=` 只看一个任务：
-
-```bash
-curl -s 'http://127.0.0.1:7863/api/cost' | python3 -m json.tool
-curl -s 'http://127.0.0.1:7863/api/cost?job_id=job_ab12cd34ef'
-```
-
-`GET /api/jobs` / `GET /api/jobs/{id}` 带 `cost_usd`、`cost_events`、`cost_chain`。换账本路径：
-
-```bash
-export SDCPP_COST_LOG=$PWD/cost.jsonl
-python3 sdcpp_modal.py web
-```
-
-### 9. 对不上官方账单时
-
-| 现象 | 原因 |
-| --- | --- |
-| 成本页是空的 | 还没跑过生成 / 演练，或 `SDCPP_COST_LOG` 指到了另一份文件 |
-| 只有 `local:dry_run` · $0 | 勾了演练，或 `SDCPP_WEB_DRY_RUN=1` |
-| 任务费用是 $0，但 Modal 控制台有钱 | 看的是旧任务；打开 **成本** 看全部 traces |
-| 自己把表里两行加起来比「已入账」大 | session 与 remote 重叠，见第 7 节 |
-| 和 `cost --official` 对不上 | 官方含本账期所有 app、卷存储、别人的 run；本页只估计 **这台机器记下的 sdcpp session/remote** |
-| Pro 6000 出图却按 L40S 计价 | 旧版本的 bug，当前工作台会在生成前写入 `SDCPP_GPU` |
-| 想清空 | 删掉 `SDCPP_COST_LOG` 那个 jsonl（不可恢复） |
-
-## Gallery dataset and Pages
-
-Generated images are stored on the public Hugging Face dataset
-[`seachen/stable-diffusion-cpp-gallery`](https://huggingface.co/datasets/seachen/stable-diffusion-cpp-gallery),
-one folder per bundled recipe (`images/ideogram4`, `images/flux2-klein`,
-`images/sd15`, ...). A new `--model-id` creates a new folder, so later models
-do not need a schema change.
-
-```bash
-python3 -m pip install 'huggingface_hub>=0.26'
-export HF_TOKEN=...
-python3 sdcpp_modal.py publish cat.png --model-id sd15 -p "a lovely cat" --seed 42
-```
-
-`generate --publish` writes the prompt plus run facts into the sidecar: duration,
-GPU name, CUDA version, torch version (or a note that sd-cli uses ggml), NVIDIA
-driver, sd-cli version, Python, Modal GPU type, and the container image. Pages
-cards show those fields under the prompt.
-
-GitHub Actions workflow `.github/workflows/gallery-pages.yml` downloads that
-dataset and deploys a paginated gallery to GitHub Pages (12 images per page,
-filters for current and future model families):
-https://xiaoqianran.github.io/stable-diffusion.cpp/
-
-## Limits
-
-- First-class path is `img_gen`. `vid_gen`, `adetailer`, `convert`, and `metadata` are not wrapped; some of their flags can still be forwarded if the remote binary accepts them.
-- `put` is for small files (64 MiB). Weights should use `pull` or `modal volume put`.
-- Size defaults match local `sd-cli` (512x512, 20 steps, cfg 7.0) unless you override them or use a recipe.
+官方 summary 的 `metered` / `billed` 才来自 Modal Workspace billing。它与本地 `job_…` estimator 用途不同：前者回答“账期最终记了多少”，后者回答“这个 Job 大约消耗了多少 GPU 墙钟资源”。
 
 ## Tests
 
+本地：
+
 ```bash
-python3 -m pytest
+cd examples/modal
+uv run pytest
+node --check web/static/ux-core.js
+node --check web/static/ux-create.js
+node --check web/static/ux-runs.js
+node --check web/static/ux-gallery.js
+node --check web/static/ux-system.js
+node --check web/static/ux-main.js
 ```
 
-These tests do not download weights and do not need a GPU.
+GitHub `Modal Python` workflow 会执行上述 JS syntax check + pytest。可靠性测试覆盖：原子下载、URL collision、未验证缓存拒绝、source index offline GPU resolution、SQLite WAL/index、FunctionCall cancel、JSONL parsing、`model` alias、API limits、bounded EventBus。
+
+## Gallery dataset / Pages
+
+CLI `--publish` 仍可把生成结果写到 Hugging Face gallery dataset；`.github/workflows/gallery-pages.yml` 负责 Pages。Web Image Lab 的本地 Gallery 则直接读取 `SDCPP_WEB_DATA/outputs` 与 SQLite，不依赖公开 dataset。
+
+## Limits
+
+- persistent `sd-server` path 当前针对 bundled text-to-image recipes；init image / control net 会退回 generic `sd-cli` path；
+- `put` 适合小文件（64 MiB），大权重使用 `pull` 或 `modal volume put`；
+- 本层 wrapper 的重点是可靠地调度 stable-diffusion.cpp，不改变 C API。

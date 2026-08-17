@@ -1,13 +1,14 @@
 import { $, api, escapeHtml, imageDialog, modelById, parseRoute, queueButton, queueLabel, refreshRuntime, setNav, state, systemDialog, workspace } from "./ux-core.js";
 import { renderCreate } from "./ux-create.js";
 import { renderGallery } from "./ux-gallery.js";
-import { renderRunDetail, renderRuns } from "./ux-runs.js";
+import { renderRunDetail, renderRuns, stopRunEvents } from "./ux-runs.js";
 import { openSystem } from "./ux-system.js";
 
 async function renderRoute({ preserveScroll = false } = {}) {
   if (!state.meta) return;
   const scroll = window.scrollY;
   const route = parseRoute();
+  if (!(route.page === "runs" && route.id)) stopRunEvents();
   setNav(route.page);
   if (route.page === "create") renderCreate();
   else if (route.page === "runs" && route.id) await renderRunDetail(route.id);
@@ -30,9 +31,8 @@ async function boot() {
     setInterval(async () => {
       const route = parseRoute();
       const ok = await refreshRuntime();
-      if (ok && route.page === "runs" && route.id) await renderRunDetail(route.id, { silent: true });
-      else if (ok && route.page === "runs") renderRuns();
-    }, 1800);
+      if (ok && route.page === "runs" && !route.id) renderRuns();
+    }, 5000);
   } catch (error) {
     workspace.innerHTML = `<div class="empty-state"><div><strong>工作台启动失败</strong><p>${escapeHtml(error.message)}</p><button class="secondary-button" onclick="location.reload()">重新加载</button></div></div>`;
     queueButton.dataset.state = "offline";

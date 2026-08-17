@@ -28,6 +28,7 @@ from .meter import (
     bind_parent,
     client_ledger,
     current_book,
+    current_task,
     end_trace,
     last_event,
     span,
@@ -36,21 +37,18 @@ from .meter import (
 
 
 def _gpu_name() -> str:
-    return os.environ.get("SDCPP_GPU", "L40S")
+    return str(current_task().get("gpu") or os.environ.get("SDCPP_GPU", "L40S"))
 
 
-def plan_for(name: str, *, gpu: bool = False, notes: str = "") -> ResourcePlan:
-    return default_plan(name, gpu=_gpu_name() if gpu else None, notes=notes)
+def plan_for(name: str, *, gpu: bool = False, gpu_name: str | None = None, notes: str = "") -> ResourcePlan:
+    return default_plan(name, gpu=(gpu_name or _gpu_name()) if gpu else None, notes=notes)
 
 
 def official_price_book() -> PriceBook:
-    try:
-        from modal import Workspace
-
-        rates = Workspace.from_context().billing.rates()
-        return PriceBook({key: str(value) for key, value in rates.items()}, source="modal-billing-rates")
-    except Exception:
-        return PriceBook(source="fallback")
+    # Modal exposes billing.report()/summary(), not a public per-unit rates API.
+    # Keep the local estimator explicit instead of silently calling a nonexistent
+    # Workspace.billing.rates() method.
+    return PriceBook(source="static-estimate")
 
 
 @contextmanager
@@ -91,9 +89,9 @@ def billed_app(app: Any, role: str) -> Iterator[str]:
         yield trace_id
 
 
-def billed_remote(fn: Any, *args: Any, name: str, gpu: bool = False, **kwargs: Any) -> Any:
-    """Call a deployed handle's `.remote()` and meter the client wait."""
-    plan = plan_for(name, gpu=gpu)
+def billed_remote(fn: Any, *args: Any, name: str, gpu: bool = False, gpu_name: str | None = None, **kwargs: Any) -> Any:
+    """Call a deployed handle's `.remote()` and record a local cost estimate."""
+    plan = plan_for(name, gpu=gpu, gpu_name=gpu_name)
     extra = {"call": name, **kwargs.pop("cost_extra", {})}
     with span(plan, phase="remote", book=current_book(), ledger=client_ledger(), extra=extra):
         result = fn.remote(*args, **kwargs)
@@ -132,7 +130,7 @@ def cost_command(*, official: bool = False) -> int:
     print(format_trace_tree(report["traces"]))
     if report["event_count"]:
         print(f"ledger {report['ledger_path']}")
-        print(f"all-time billed estimate {report['billed_display']}")
+        print(f"all-time local estimate {report['estimated_display']}")
         rates = report["rates"]
         print(
             f"per-second cpu {format_per_second(rates['cpu_per_second'])}  "
