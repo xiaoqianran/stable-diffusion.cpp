@@ -73,25 +73,8 @@ class MockGenerator:
 
 
 class ModalGenerator:
-    def generate_job(
-        self,
-        items: list[dict[str, Any]],
-        *,
-        gpu: str,
-        job_id: str = "",
-    ) -> Iterator[dict[str, Any]]:
-        if not items:
-            return
-        import os
-
-        from .deployed import engine, ensure_deployed, storage_function
-        from .meter import bind_task
-        from .modal_meter import billed_remote, billed_service
-
-        os.environ["SDCPP_GPU"] = gpu
-        ensure_deployed()
-
-        requests = [
+    def _requests(self, items: list[dict[str, Any]]) -> list[Any]:
+        return [
             apply_recipe(
                 item["recipe"],
                 prompt=item["prompt"],
@@ -104,9 +87,26 @@ class ModalGenerator:
             for item in items
         ]
 
-        # Stage every model needed by the job on CPU first. Each call waits for
-        # the Volume commit, so no GPU container is started until all artifacts
-        # are available remotely.
+    def prepare_job(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        gpu: str,
+        job_id: str = "",
+    ) -> list[Any]:
+        """Stage every artifact on CPU and wait for the shared Volume commit."""
+        if not items:
+            return []
+        import os
+
+        from .deployed import ensure_deployed, storage_function
+        from .meter import bind_task
+        from .modal_meter import billed_remote, billed_service
+
+        os.environ["SDCPP_GPU"] = gpu
+        ensure_deployed()
+        requests = self._requests(items)
+
         with bind_task(job_id=job_id, recipe=items[0]["recipe"], gpu=gpu):
             with billed_service("storage"):
                 ensure_artifacts = storage_function("ensure_artifacts")
@@ -139,7 +139,28 @@ class ModalGenerator:
                         payload,
                         name="ensure_artifacts",
                     )
+        return requests
 
+    def generate_prepared_job(
+        self,
+        items: list[dict[str, Any]],
+        requests: list[Any],
+        *,
+        gpu: str,
+        job_id: str = "",
+    ) -> Iterator[dict[str, Any]]:
+        """Run only the GPU phase for requests whose artifacts are already staged."""
+        if not items:
+            return
+
+        from .deployed import engine
+        from .meter import bind_task
+        from .modal_meter import billed_remote, billed_service
+
+        if len(items) != len(requests):
+            raise ValueError("items/requests length mismatch")
+
+        with bind_task(job_id=job_id, recipe=items[0]["recipe"], gpu=gpu):
             with billed_service("gpu"):
                 remote_engine = engine(gpu=gpu)
                 for item, request in zip(items, requests):
@@ -172,3 +193,19 @@ class ModalGenerator:
                         "dropped_fields": result.get("dropped_fields"),
                         "cost": result.get("cost"),
                     }
+
+    def generate_job(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        gpu: str,
+        job_id: str = "",
+    ) -> Iterator[dict[str, Any]]:
+        """Compatibility wrapper: CPU stage first, then GPU generation."""
+        requests = self.prepare_job(items, gpu=gpu, job_id=job_id)
+        yield from self.generate_prepared_job(
+            items,
+            requests,
+            gpu=gpu,
+            job_id=job_id,
+        )
