@@ -4,13 +4,27 @@ on:
   pull_request:
     paths:
       - "examples/modal/**"
+      - "CMakeLists.txt"
+      - "tests/**"
+      - "src/**"
+      - "include/**"
+      - "docker/Dockerfile.cuda"
       - ".github/workflows/modal-python.yml"
+      - ".github/workflows/reliability.yml"
+      - ".github/workflows/modal-deploy.yml"
   push:
     branches:
       - master
     paths:
       - "examples/modal/**"
+      - "CMakeLists.txt"
+      - "tests/**"
+      - "src/**"
+      - "include/**"
+      - "docker/Dockerfile.cuda"
       - ".github/workflows/modal-python.yml"
+      - ".github/workflows/reliability.yml"
+      - ".github/workflows/modal-deploy.yml"
 
 jobs:
   test:

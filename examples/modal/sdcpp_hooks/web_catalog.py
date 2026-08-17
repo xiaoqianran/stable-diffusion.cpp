@@ -32,8 +32,8 @@ RECIPE_CARDS: list[dict[str, Any]] = [
         "label": "Ideogram 4.0",
         "label_zh": "Ideogram 4.0",
         "elo": 1217,
-        "hint": "Prompt must be JSON, e.g. {\"high_level_description\":\"a cat\"}.",
-        "hint_zh": "提示词必须是 JSON，例如 {\"high_level_description\":\"一只猫\"}。",
+        "hint": "Plain text is auto-wrapped as Ideogram JSON; raw JSON is also accepted.",
+        "hint_zh": "普通文本会自动转换为 Ideogram JSON；也可直接输入 JSON。",
     },
     {
         "id": "flux2-klein",

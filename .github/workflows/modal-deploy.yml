@@ -1,0 +1,89 @@
+name: Modal Deploy
+
+on:
+  workflow_run:
+    workflows: ["Reliability"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+concurrency:
+  group: modal-deploy-master
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'master' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      SDCPP_DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+      SDCPP_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.event.workflow_run.head_sha }}-cuda
+    defaults:
+      run:
+        working-directory: examples/modal
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Require Modal Python CI for the same revision
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          sha="$SDCPP_DEPLOY_SHA"
+          result="missing"
+          for _ in $(seq 1 30); do
+            result="$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${sha}&event=push&per_page=100" \
+              --jq '[.workflow_runs[] | select(.name == "Modal Python")][0] | (.conclusion // .status // "missing")')"
+            echo "Modal Python for ${sha}: ${result}"
+            case "$result" in
+              success) break ;;
+              failure|cancelled|timed_out|action_required) exit 1 ;;
+              *) sleep 10 ;;
+            esac
+          done
+          test "$result" = "success"
+
+      - name: Check Modal credentials
+        id: auth
+        shell: bash
+        run: |
+          if [[ -n "$MODAL_TOKEN_ID" && -n "$MODAL_TOKEN_SECRET" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Modal secrets are not configured; deployment is skipped."
+          fi
+
+      - name: Install uv
+        if: steps.auth.outputs.enabled == 'true'
+        run: python -m pip install uv
+
+      - name: Sync dependencies
+        if: steps.auth.outputs.enabled == 'true'
+        run: uv sync --frozen
+
+      - name: Deploy immutable revision
+        if: steps.auth.outputs.enabled == 'true'
+        run: >-
+          uv run python -c
+          "from sdcpp_hooks.deployed import ensure_deployed; ensure_deployed(force=True)"
+
+      - name: Verify deployment identity
+        if: steps.auth.outputs.enabled == 'true'
+        run: >-
+          uv run python -c
+          "from sdcpp_hooks.deployed import deployment_status;
+          s=deployment_status(refresh=True); print(s);
+          raise SystemExit(0 if s.get('matches') else 1)"

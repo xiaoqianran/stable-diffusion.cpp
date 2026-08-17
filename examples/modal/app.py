@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import os
+import time
 import subprocess
 from pathlib import Path
 
@@ -27,17 +28,18 @@ from sdcpp_hooks.meter import ContainerMeter
 from sdcpp_hooks.probe import probe_cli_help
 from sdcpp_hooks.runner import EngineError, run_cli
 from sdcpp_hooks.server_runtime import (
+    ServerUnavailableError,
     server_generate,
+    server_is_alive,
     start_recipe_server,
     stop_recipe_server,
 )
+from sdcpp_hooks.runtime_identity import default_image_tag, deployment_identity
 
 
 HERE = Path(__file__).resolve().parent
-IMAGE_TAG = os.environ.get(
-    "SDCPP_IMAGE",
-    "ghcr.io/leejet/stable-diffusion.cpp:master-cuda",
-)
+IMAGE_TAG = default_image_tag()
+DEPLOY_SHA = os.environ.get("SDCPP_DEPLOY_SHA", "")
 
 
 def _gpu_name() -> str:
@@ -58,7 +60,8 @@ def _positive_int_env(name: str, default: int) -> int:
 
 GPU = _gpu_name()
 MODEL_ROOT = Path(os.environ.get("SDCPP_MODEL_ROOT", "/models"))
-IDLE_SECONDS = int(os.environ.get("SDCPP_IDLE_SECONDS", "10"))
+CPU_IDLE_SECONDS = int(os.environ.get("SDCPP_CPU_IDLE_SECONDS", os.environ.get("SDCPP_IDLE_SECONDS", "10")))
+GPU_IDLE_SECONDS = int(os.environ.get("SDCPP_GPU_IDLE_SECONDS", os.environ.get("SDCPP_IDLE_SECONDS", "60")))
 GPU_MAX_CONTAINERS = _positive_int_env("SDCPP_GPU_MAX_CONTAINERS", 1)
 
 volume = modal.Volume.from_name("sdcpp-models", create_if_missing=True)
@@ -93,6 +96,7 @@ def _cpu_image() -> modal.Image:
         modal.Image.debian_slim(python_version="3.12")
         .apt_install("aria2")
         .pip_install("huggingface_hub")
+        .env({"SDCPP_DEPLOY_SHA": DEPLOY_SHA})
     )
 
 
@@ -100,7 +104,7 @@ def _cuda_image() -> modal.Image:
     return _with_hooks(
         modal.Image.from_registry(IMAGE_TAG, add_python="3.12")
         .entrypoint([])
-        .env({"SDCPP_GPU": GPU, "SDCPP_IMAGE": IMAGE_TAG})
+        .env({"SDCPP_GPU": GPU, "SDCPP_IMAGE": IMAGE_TAG, "SDCPP_DEPLOY_SHA": DEPLOY_SHA})
     )
 
 
@@ -118,19 +122,21 @@ def _secrets() -> list[modal.Secret]:
     return []
 
 
-def _idle_kwargs() -> dict:
+def _idle_kwargs(*, gpu: bool = False) -> dict:
     return {
         "min_containers": 0,
         "buffer_containers": 0,
-        "scaledown_window": IDLE_SECONDS,
+        "scaledown_window": GPU_IDLE_SECONDS if gpu else CPU_IDLE_SECONDS,
     }
 
 
 def _gpu_idle_kwargs() -> dict:
-    return {
-        **_idle_kwargs(),
-        "max_containers": GPU_MAX_CONTAINERS,
-    }
+    return {**_idle_kwargs(gpu=True), "max_containers": GPU_MAX_CONTAINERS}
+
+
+def _storage_writer_kwargs() -> dict:
+    # One writer container prevents same-path lost updates on the shared Volume.
+    return {**_idle_kwargs(), "max_containers": 1}
 
 
 def _pull_workers() -> int:
@@ -172,7 +178,7 @@ gpu_app = modal.App("sdcpp-cli", image=_cuda_image(), tags={**_APP_TAGS, "role":
     timeout=2 * 60 * 60,
     volumes={str(MODEL_ROOT): volume},
     secrets=_secrets(),
-    **_idle_kwargs(),
+    **_storage_writer_kwargs(),
 )
 def pull(uris: list[str]) -> list[dict]:
     volume.reload()
@@ -185,7 +191,7 @@ def pull(uris: list[str]) -> list[dict]:
     timeout=2 * 60 * 60,
     volumes={str(MODEL_ROOT): volume},
     secrets=_secrets(),
-    **_idle_kwargs(),
+    **_storage_writer_kwargs(),
 )
 def ensure_artifacts(payload: dict) -> list[dict]:
     request = GenerateRequest.from_dict(payload)
@@ -208,7 +214,7 @@ def list_storage() -> list[dict]:
 @storage_app.function(
     timeout=30 * 60,
     volumes={str(MODEL_ROOT): volume},
-    **_idle_kwargs(),
+    **_storage_writer_kwargs(),
 )
 def put_files(files: list[dict]) -> list[dict]:
     volume.reload()
@@ -219,7 +225,16 @@ def put_files(files: list[dict]) -> list[dict]:
             raise ValueError(f"invalid remote path {item['path']!r}")
         dest = MODEL_ROOT / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(base64.b64decode(item["data"]))
+        payload = base64.b64decode(item["data"])
+        partial = dest.with_name(f".{dest.name}.partial-{os.getpid()}-{time.time_ns()}")
+        try:
+            partial.write_bytes(payload)
+            os.replace(partial, dest)
+        finally:
+            try:
+                partial.unlink()
+            except FileNotFoundError:
+                pass
         rows.append(
             {
                 "path": dest.relative_to(MODEL_ROOT).as_posix(),
@@ -228,6 +243,16 @@ def put_files(files: list[dict]) -> list[dict]:
         )
     volume.commit()
     return rows
+
+
+@storage_app.function(**_idle_kwargs())
+def deployment_info() -> dict:
+    return deployment_identity(role="storage")
+
+
+@gpu_app.function(image=_cpu_image(), **_idle_kwargs())
+def gpu_deployment_info() -> dict:
+    return deployment_identity(image=IMAGE_TAG, role="gpu")
 
 
 @gpu_app.function(**_idle_kwargs())
@@ -251,10 +276,11 @@ class SDEngine:
     # Empty recipe preserves the generic CLI path. A bundled recipe creates its
     # own Modal container pool and loads sd-server once in @enter.
     recipe: str = modal.parameter(default="")
+    gpu_name: str = modal.parameter(default=GPU)
 
     @modal.enter()
     def start(self) -> None:
-        self._meter = ContainerMeter.start("SDEngine", gpu=GPU)
+        self._meter = ContainerMeter.start("SDEngine", gpu=self.gpu_name)
         self._server = None
         self._server_argv: list[str] = []
         self._server_dropped: list[str] = []
@@ -312,6 +338,22 @@ class SDEngine:
             "host": host,
         }
 
+    def _restart_server(self) -> None:
+        stop_recipe_server(getattr(self, "_server", None))
+        volume.reload()
+        self._server, self._server_argv, self._server_dropped = start_recipe_server(self.recipe, MODEL_ROOT)
+
+    def _server_generate_resilient(self, request: GenerateRequest) -> dict:
+        if not server_is_alive(getattr(self, "_server", None)):
+            self._restart_server()
+        try:
+            return server_generate(request)
+        except ServerUnavailableError:
+            # Recover once from a crashed/terminated child. A second failure lets
+            # the Modal input fail so the platform can route later work elsewhere.
+            self._restart_server()
+            return server_generate(request)
+
     @modal.method()
     def generate(self, payload: dict) -> dict:
         request = GenerateRequest.from_dict(payload)
@@ -320,7 +362,7 @@ class SDEngine:
         # Recipe pools keep one sd-server process and its model resident for all
         # compatible prompts handled by this warm container.
         if self.recipe and not request.init_image and not request.control_net:
-            result = server_generate(request)
+            result = self._server_generate_resilient(request)
             host = collect_run_environment(binary="/sd-server")
             body = {
                 "images": [base64.b64encode(image).decode("ascii") for image in result["images"]],
@@ -340,8 +382,9 @@ class SDEngine:
             body["recipe"] = self.recipe or None
 
         host = dict(body.get("host") or {})
-        host.setdefault("modal_gpu", os.environ.get("SDCPP_GPU", GPU))
-        host.setdefault("sdcpp_image", IMAGE_TAG)
+        host["modal_gpu"] = self.gpu_name
+        host["sdcpp_image"] = IMAGE_TAG
+        host["deploy_sha"] = DEPLOY_SHA
         body["host"] = host
         body.update(
             {
@@ -352,4 +395,5 @@ class SDEngine:
                 "model": request.model or request.diffusion_model,
             }
         )
+        body["runtime_identity"] = deployment_identity(image=IMAGE_TAG, role="gpu")
         return body

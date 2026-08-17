@@ -66,13 +66,11 @@ def client_ledger_path() -> Path:
 
 
 def worker_ledger_path() -> Path | None:
+    # Never append a shared log file on the model Volume by default: concurrent
+    # containers would race with last-write-wins Volume semantics. Opt in only
+    # with an explicit container-local or otherwise safe path.
     raw = os.environ.get("SDCPP_COST_WORKER_LOG")
-    if raw:
-        return Path(raw)
-    root = Path(os.environ.get("SDCPP_MODEL_ROOT", "/models"))
-    if not root.exists() or not os.access(root, os.W_OK):
-        return None
-    return root / ".sdcpp-cost" / "events.jsonl"
+    return Path(raw) if raw else None
 
 
 class Ledger:
@@ -233,5 +231,5 @@ def summarize_events(events: list[CostEvent]) -> str:
     if not events:
         return "cost ledger is empty"
     lines = [format_event(event) for event in events[-20:]]
-    lines.append(f"cost billed {format_usd(billed_usd(events[-20:]))}  (last {min(20, len(events))} events)")
+    lines.append(f"cost estimated {format_usd(billed_usd(events[-20:]))}  (last {min(20, len(events))} events)")
     return "\n".join(lines)

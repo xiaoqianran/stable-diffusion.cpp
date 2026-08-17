@@ -27,6 +27,7 @@ export const state = {
 export const PHASE = {
   pending: "已提交",
   preparing: "正在准备模型",
+  recovering: "正在恢复任务",
   gpu_queued: "等待 GPU",
   gpu_running: "正在生成",
   running: "正在运行",
@@ -121,7 +122,7 @@ export function phaseClass(job) {
   const phase = job?.phase || job?.status || "pending";
   if (phase === "gpu_running" || phase === "running") return "running";
   if (phase === "gpu_queued") return "queued";
-  if (phase === "preparing" || phase === "pending") return "preparing";
+  if (phase === "preparing" || phase === "recovering" || phase === "pending") return "preparing";
   return phase;
 }
 
@@ -159,7 +160,7 @@ export function updateHeader() {
 
 export async function refreshRuntime() {
   try {
-    const [queuePayload, jobs] = await Promise.all([api("/api/runtime/queue"), api("/api/jobs")]);
+    const [queuePayload, jobs] = await Promise.all([api("/api/runtime/queue"), api("/api/jobs?limit=50")]);
     state.queue = queuePayload.gpu || queuePayload;
     state.jobs = jobs || [];
     updateHeader();

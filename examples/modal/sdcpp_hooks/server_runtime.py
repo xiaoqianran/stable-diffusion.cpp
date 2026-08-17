@@ -19,6 +19,12 @@ from .recipes import apply_recipe
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 18080
 SERVER_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
+
+
+class ServerUnavailableError(RuntimeError):
+    """The local sd-server process is unavailable and the container may recover it."""
+
+
 SERVER_MODEL_FIELDS = (
     "model", "diffusion_model", "uncond_diffusion_model", "vae",
     "clip_l", "clip_g", "t5xxl", "llm", "llm_vision", "clip_vision",
@@ -71,8 +77,10 @@ def recipe_server_argv(recipe: str, cache_dir: Path, *, host: str = SERVER_HOST,
             continue
         flag = next((name for name in FIELD_ALIASES[field] if engine.has_flag(name)), None)
         if flag is None:
-            dropped.append(field)
-            continue
+            raise RuntimeError(
+                f"sd-server in the configured image does not support required model flag for {field!r}; "
+                "the Docker image and Python deployment are incompatible"
+            )
         argv.extend(_emit(flag, value))
     for raw_name, value in resolved.extra_cli.items():
         name = _normalize_cli_name(raw_name)
@@ -124,6 +132,11 @@ def start_recipe_server(recipe: str, cache_dir: Path) -> tuple[subprocess.Popen[
     return process, argv, dropped
 
 
+
+
+def server_is_alive(process: subprocess.Popen[Any] | None) -> bool:
+    return process is not None and process.poll() is None
+
 def stop_recipe_server(process: subprocess.Popen[Any] | None) -> None:
     if process is None or process.poll() is not None:
         return
@@ -155,7 +168,10 @@ def server_generate(request: GenerateRequest, *, url: str = SERVER_URL) -> dict[
         payload["scheduler"] = request.scheduler
     payload = {key: value for key, value in payload.items() if value is not None}
     started = time.perf_counter()
-    response = _request_json("POST", f"{url}/sdapi/v1/txt2img", payload, timeout=2 * 60 * 60)
+    try:
+        response = _request_json("POST", f"{url}/sdapi/v1/txt2img", payload, timeout=2 * 60 * 60)
+    except (ConnectionError, OSError, urllib.error.URLError) as exc:
+        raise ServerUnavailableError(f"sd-server is unavailable: {exc}") from exc
     duration_ms = int((time.perf_counter() - started) * 1000)
     return {
         "images": [base64.b64decode(value) for value in response.get("images") or []],

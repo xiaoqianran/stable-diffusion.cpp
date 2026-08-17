@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Mapping, Sequence
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -204,15 +205,46 @@ def download_with_urllib(url: str, dest: Path, headers: Mapping[str, str]) -> Pa
     return dest
 
 
+def _partial_path(dest: Path) -> Path:
+    return dest.with_name(f".{dest.name}.partial-{uuid.uuid4().hex}")
+
+
+def _cleanup_partial(path: Path) -> None:
+    for candidate in (path, path.with_name(path.name + ".aria2")):
+        try:
+            candidate.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def fast_fetch(url: str, dest: Path, headers: Mapping[str, str]) -> Path:
+    """Download into a same-directory temporary file and atomically publish it.
+
+    A failed downloader can never leave a truncated final model path behind.
+    The temporary file is intentionally on the same filesystem so os.replace()
+    is atomic for local filesystems and Modal Volume mounts.
+    """
     dest = Path(dest)
     url = prepare_url(url, headers)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = _partial_path(dest)
     print(f"fetch {redact_url_for_log(url)} -> {dest}", flush=True)
-    if download_with_aria2c(url, dest, headers):
+    try:
+        ok = download_with_aria2c(url, partial, headers)
+        if not ok and ("huggingface.co" in url or "hf-mirror.com" in url):
+            print("aria2c unavailable or failed; trying Hugging Face CLI", flush=True)
+            _cleanup_partial(partial)
+            ok = download_with_hf_cli(url, partial)
+        if not ok:
+            print("falling back to urllib", flush=True)
+            _cleanup_partial(partial)
+            download_with_urllib(url, partial, headers)
+        if not partial.is_file() or partial.stat().st_size <= 0:
+            raise IOError(f"download produced an empty file for {redact_url_for_log(url)}")
+        os.replace(partial, dest)
         return dest
-    if "huggingface.co" in url or "hf-mirror.com" in url:
-        print("aria2c unavailable or failed; trying Hugging Face CLI", flush=True)
-        if download_with_hf_cli(url, dest):
-            return dest
-    print("falling back to urllib", flush=True)
-    return download_with_urllib(url, dest, headers)
+    except Exception:
+        _cleanup_partial(partial)
+        raise
+    finally:
+        _cleanup_partial(partial)
