@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import uuid
@@ -8,11 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .recipes import RECIPES
+from .cost import default_plan
 from .cost_view import job_totals
 from .gpu import default_gpu_for_recipe
+from .gpu_queue import GPUQueue
 from .meter import bind_task, client_ledger, record_event
-from .cost import default_plan
+from .recipes import RECIPES
 from .web_catalog import default_recipe, normalize_gpu
 from .web_events import Event, EventBus
 from .web_generator import MockGenerator, ModalGenerator
@@ -59,6 +61,13 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
+def _gpu_queue_limit() -> int:
+    try:
+        return max(1, int(os.environ.get("SDCPP_GPU_MAX_CONTAINERS", "1")))
+    except ValueError:
+        return 1
+
+
 class JobService:
     def __init__(self, data_dir: Path, events: EventBus | None = None) -> None:
         self.data_dir = Path(data_dir)
@@ -68,8 +77,11 @@ class JobService:
         self.db_path = self.data_dir / "sdcpp-web.db"
         self.events = events or EventBus()
         self._lock = threading.Lock()
+        self._runtime_lock = threading.Lock()
         self._cancel: set[str] = set()
         self._threads: dict[str, threading.Thread] = {}
+        self._phases: dict[str, str] = {}
+        self._gpu_queue = GPUQueue(max_active=_gpu_queue_limit())
         with self._connect() as conn:
             conn.executescript(SCHEMA)
 
@@ -97,7 +109,7 @@ class JobService:
 
         job_id = _new_id("job")
         now = _utc_now()
-        images: list[tuple[str, str, int]] = []
+        images: list[tuple[str, int, str]] = []
         for spec in specs:
             prompt = str(spec.get("prompt") or "").strip()
             if not prompt:
@@ -148,6 +160,7 @@ class JobService:
                     ),
                 )
             conn.commit()
+        self._set_phase(job_id, "pending")
         summary = self.get_job(job_id)
         self.events.publish(Event("job.snapshot", job_id, summary))
         return summary
@@ -162,28 +175,35 @@ class JobService:
 
     def resume(self, job_id: str) -> dict[str, Any]:
         self._cancel.discard(job_id)
+        self._set_phase(job_id, "pending")
         self.start(job_id)
         return self.get_job(job_id)
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         self._cancel.add(job_id)
+        self._gpu_queue.cancel(job_id)
+        self._set_phase(job_id, "cancelled")
         self._set_job(job_id, status="cancelled")
+        self._publish_queue_state()
         summary = self.get_job(job_id)
         self.events.publish(Event("job.cancelled", job_id, summary))
         return summary
+
+    def queue_snapshot(self) -> dict[str, Any]:
+        return self._gpu_queue.snapshot()
 
     def list_jobs(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
         costs = job_totals(client_ledger().read())
-        return [self._with_cost(self._job_row(row), costs) for row in rows]
+        return [self._with_cost(self._attach_runtime(self._job_row(row)), costs) for row in rows]
 
     def get_job(self, job_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if row is None:
             raise KeyError(job_id)
-        return self._job_row(row)
+        return self._attach_runtime(self._job_row(row))
 
     def get_job_detail(self, job_id: str) -> dict[str, Any]:
         job = self._with_cost(self.get_job(job_id))
@@ -265,8 +285,7 @@ class JobService:
     def _run(self, job_id: str) -> None:
         job = self.get_job(job_id)
         config = job["config"]
-        self._set_job(job_id, status="running")
-        self.events.publish(Event("job.started", job_id, self.get_job(job_id)))
+        self._set_job(job_id, status="running", error=None)
         with self._connect() as conn:
             pending = conn.execute(
                 "SELECT * FROM images WHERE job_id = ? AND status IN ('pending', 'failed')",
@@ -274,8 +293,13 @@ class JobService:
             ).fetchall()
         items = [dict(row) for row in pending]
         dry_run = bool(config.get("dry_run"))
+        acquired_gpu = False
+        queued_gpu = False
+
         try:
             if dry_run:
+                self._set_phase(job_id, "running")
+                self.events.publish(Event("job.started", job_id, self.get_job(job_id)))
                 mock = MockGenerator()
                 with bind_task(job_id=job_id, recipe=job["recipe"], gpu=job["gpu"]):
                     record_event(
@@ -302,20 +326,53 @@ class JobService:
                     )
             else:
                 modal = ModalGenerator()
-                results = modal.generate_job(
-                    [
-                        {
-                            "id": item["id"],
-                            "prompt": item["prompt"],
-                            "recipe": item["recipe"],
-                            "seed": item["seed"],
-                            "width": item["width"],
-                            "height": item["height"],
-                            "steps": item["steps"],
-                            "cfg_scale": item["cfg_scale"],
-                        }
-                        for item in items
-                    ],
+                generation_items = [
+                    {
+                        "id": item["id"],
+                        "prompt": item["prompt"],
+                        "recipe": item["recipe"],
+                        "seed": item["seed"],
+                        "width": item["width"],
+                        "height": item["height"],
+                        "steps": item["steps"],
+                        "cfg_scale": item["cfg_scale"],
+                    }
+                    for item in items
+                ]
+
+                # CPU and shared Volume phase: jobs may do this concurrently.
+                self._set_phase(job_id, "preparing")
+                self.events.publish(Event("job.preparing", job_id, self.get_job(job_id)))
+                requests = modal.prepare_job(
+                    generation_items,
+                    gpu=job["gpu"],
+                    job_id=job_id,
+                )
+                if job_id in self._cancel:
+                    return
+
+                # Only fully staged jobs enter the GPU FIFO. The local queue mirrors
+                # SDEngine max_containers so frontend positions are actionable.
+                self._set_phase(job_id, "gpu_queued")
+                self._gpu_queue.enqueue(job_id)
+                queued_gpu = True
+                self._publish_queue_state()
+                self.events.publish(Event("job.gpu_queued", job_id, self.get_job(job_id)))
+
+                acquired_gpu = self._gpu_queue.acquire(
+                    job_id,
+                    cancelled=lambda: job_id in self._cancel,
+                )
+                if not acquired_gpu:
+                    return
+                queued_gpu = False
+                self._set_phase(job_id, "gpu_running")
+                self._publish_queue_state()
+                self.events.publish(Event("job.gpu_started", job_id, self.get_job(job_id)))
+
+                results = modal.generate_prepared_job(
+                    generation_items,
+                    requests,
                     gpu=job["gpu"],
                     job_id=job_id,
                 )
@@ -325,13 +382,62 @@ class JobService:
                         return
                     self._finish_one(job_id, by_id[result["id"]], result)
         except Exception as exc:
+            self._set_phase(job_id, "failed")
             self._set_job(job_id, status="failed", error=str(exc))
             self.events.publish(Event("job.failed", job_id, {**self.get_job(job_id), "error": str(exc)}))
             return
+        finally:
+            if acquired_gpu:
+                self._gpu_queue.release(job_id)
+                self._publish_queue_state()
+            elif queued_gpu:
+                self._gpu_queue.cancel(job_id)
+                self._publish_queue_state()
+
+        if job_id in self._cancel:
+            return
         summary = self.get_job(job_id)
         status = "completed" if summary["failed_images"] == 0 else "failed"
+        self._set_phase(job_id, status)
         self._set_job(job_id, status=status)
         self.events.publish(Event(f"job.{status}", job_id, self.get_job(job_id)))
+
+    def _publish_queue_state(self) -> None:
+        snapshot = self._gpu_queue.snapshot()
+        targets = list(dict.fromkeys([
+            *snapshot["running_job_ids"],
+            *snapshot["waiting_job_ids"],
+        ]))
+        for target in targets:
+            try:
+                payload = self.get_job(target)
+            except KeyError:
+                continue
+            self.events.publish(Event("gpu.queue", target, payload))
+
+    def _set_phase(self, job_id: str, phase: str) -> None:
+        with self._runtime_lock:
+            self._phases[job_id] = phase
+
+    def _attach_runtime(self, job: dict[str, Any]) -> dict[str, Any]:
+        with self._runtime_lock:
+            phase = self._phases.get(job["id"])
+        queue = self._gpu_queue.snapshot(job["id"])
+        job_queue = queue.get("job") or {}
+
+        if phase is None:
+            if job["status"] in {"completed", "failed", "cancelled"}:
+                phase = job["status"]
+            elif job_queue.get("state") == "running":
+                phase = "gpu_running"
+            elif job_queue.get("state") == "waiting":
+                phase = "gpu_queued"
+            else:
+                phase = job["status"]
+
+        job["phase"] = phase
+        job["queue"] = job_queue
+        return job
 
     def _finish_one(self, job_id: str, item: dict[str, Any], result: dict[str, Any]) -> None:
         images = result.get("images") or []
