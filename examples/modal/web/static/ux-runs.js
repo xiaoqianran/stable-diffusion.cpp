@@ -21,8 +21,8 @@ export function renderRuns() {
   workspace.innerHTML = `${pageTitle("RUNS", "运行", "只关注正在发生什么、还要多久，以及结果在哪里。技术细节需要时再展开。")}<div class="runs-layout">${active ? `<a href="#/runs/${encodeURIComponent(active.id)}">${runHero(active)}</a>` : ""}${jobs.length ? `<section><div class="run-section-title"><h2>${active ? "其他任务" : "最近任务"}</h2><span>${jobs.length} 个任务</span></div><div class="run-list">${rest.map(runRow).join("")}</div></section>` : `<div class="empty-state"><div><strong>还没有运行记录</strong><p>从创建页面提交第一条 Prompt。</p><a class="text-button" href="#/create">开始创建 →</a></div></div>`}</div>`;
 }
 
-export async function renderRunDetail(jobId) {
-  workspace.innerHTML = `<div class="empty-state"><div><strong>正在读取任务…</strong></div></div>`;
+export async function renderRunDetail(jobId, { silent = false } = {}) {
+  if (!silent) workspace.innerHTML = `<div class="empty-state"><div><strong>正在读取任务…</strong></div></div>`;
   try {
     const [detail, gallery] = await Promise.all([api(`/api/jobs/${encodeURIComponent(jobId)}`), api(`/api/gallery?job_id=${encodeURIComponent(jobId)}&per_page=8&page=1`)]);
     const job = detail.job;
